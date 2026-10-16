@@ -111,19 +111,40 @@ def refresh_from_espn(conn: sqlite3.Connection, season: str, first_day: date, to
                          "GROUP BY player_id").fetchall()
     id_by_name = {norm_name(n): pid for n, pid in names}
     cols = ["season", "game_id", "player_id", "player_name", "team", "game_date", "matchup", *GAME_LOG_COLS]
-    added, d = 0, start
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch_json(url):  # network only (threads); caching happens on the main thread
+        for attempt in range(3):
+            r = requests.get(url, headers=_H, timeout=30)
+            if r.ok:
+                return r.json()
+            time.sleep(1 + attempt)
+        r.raise_for_status()
+
+    # finished games per day (one scoreboard request per day)
+    todo: list[tuple[date, str]] = []
+    d = start
     while d < today:
         sb = _get(conn, SCOREBOARD.format(d=d.strftime("%Y%m%d")), None if d < today - timedelta(days=2) else 1800)
-        for ev in sb.get("events", []):
-            if ev.get("status", {}).get("type", {}).get("name") != "STATUS_FINAL":
-                continue
-            summ = _get(conn, SUMMARY.format(e=ev["id"]), None)
-            rows = game_rows(summ, d, id_by_name)
-            conn.executemany(
-                f"INSERT OR REPLACE INTO game_logs({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
-                [(season, *[r[c] for c in cols[1:]]) for r in rows])
-            added += len(rows)
+        todo += [(d, ev["id"]) for ev in sb.get("events", [])
+                 if ev.get("status", {}).get("type", {}).get("name") == "STATUS_FINAL"]
         d += timedelta(days=1)
+    # box scores: cached ones from SQLite, the rest fetched 8 at a time
+    summaries = {e: cache_get(conn, SUMMARY.format(e=e), None) for _, e in todo}
+    missing = [e for e, s in summaries.items() if s is None]
+    global API_CALLS
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for e, data in zip(missing, pool.map(lambda e: fetch_json(SUMMARY.format(e=e)), missing)):
+            API_CALLS += 1
+            cache_put(conn, SUMMARY.format(e=e), data)
+            summaries[e] = data
+    added = 0
+    for d, e in todo:
+        rows = game_rows(summaries[e], d, id_by_name)
+        conn.executemany(
+            f"INSERT OR REPLACE INTO game_logs({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+            [(season, *[r[c] for c in cols[1:]]) for r in rows])
+        added += len(rows)
     conn.commit()
     return {"season": season, "fetched": added, "source": "ESPN", "from": str(start)}
 
