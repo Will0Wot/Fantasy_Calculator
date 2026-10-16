@@ -1,0 +1,29 @@
+[project]
+name = "tradecalc"
+version = "0.1.0"
+description = "Fantasy basketball trade calculator (ESPN H2H points)"
+requires-python = ">=3.11"
+dependencies = [
+  "pandas", "numpy", "scipy", "pulp", "nba_api", "requests", "rapidfuzz",
+  "typer", "pyyaml", "python-dotenv", "scikit-learn",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+app = ["streamlit"]
+
+[project.scripts]
+tradecalc = "tradecalc.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tradecalc*"]
+
+[tool.setuptools.package-data]
+tradecalc = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tradecalc/tests"]

@@ -1,0 +1,107 @@
+# League-specific settings. Every league value used by the code lives here.
+# `tradecalc check` compares these against what ESPN reports and warns on mismatch.
+
+league:
+  platform: espn
+  league_id: 1331882803
+  season: 2027                # ESPN season id (2026-27 NBA season)
+  nba_season: "2026-27"       # stats.nba.com season string
+  prev_nba_season: "2025-26"
+  prev_season: 2026
+  my_team_id: 1               # ESPN team id of the user's team ("Wills men")
+  num_teams: 12
+  regular_season_weeks: 24
+  playoffs: false
+  tie_value: 0.5              # ESPN matchupTieRule NONE -> a tie stands, counts as half a win
+
+# Points per stat. Keys are stats.nba.com box-score column names.
+scoring:
+  PTS: 1
+  REB: 1
+  AST: 2
+  STL: 4
+  BLK: 4
+  TOV: -2
+  FGM: 2
+  FGA: -1
+  FTM: 1
+  FTA: -1
+  FG3M: 1
+
+# Lineup slots (starters only; bench/IR listed for roster-size accounting).
+roster:
+  slots:
+    PG: 1
+    SG: 1
+    SF: 1
+    PF: 1
+    C: 1
+    G: 1
+    F: 1
+    UTIL: 3
+  bench: 3
+  ir: 1
+  # Which player positions each slot accepts. Player positions come from ESPN eligibility.
+  slot_eligibility:
+    PG: [PG]
+    SG: [SG]
+    SF: [SF]
+    PF: [PF]
+    C: [C]
+    G: [PG, SG]
+    F: [SF, PF]
+    UTIL: [PG, SG, SF, PF, C]
+
+lineup:
+  lock: daily                 # ESPN lineupLocktimeType INDIVIDUAL_GAME; modeled as daily
+  weekly_games_cap: null      # no games-played / games-started cap
+
+# Fantasy week boundaries. Default rule: week 1 = opening day through the first Sunday,
+# then Monday-Sunday weeks; if that yields more weeks than the league has, the week
+# containing the All-Star break is merged with the following week.
+# To override, list explicit [first_date, last_date] pairs per week number, e.g.
+#   overrides: {18: ["2027-02-15", "2027-02-28"]}
+weeks:
+  rule: mon_sun_merge_allstar
+  overrides: {}
+
+model:
+  k: 6                       # shrinkage games for prior vs live (tuned in backtest)
+  role_change_threshold: 0.20 # |mpg_last5 - mpg_season| / mpg_season
+  role_change_min_games: 5
+  role_change_recent_games: 10
+  role_change_recent_weight: 0.5 # live term = (1-w)*season FPPG + w*recent FPPG when flagged
+  availability_cap: 0.95
+  dtd_availability: 0.5
+  out_default_games: 10       # games missed when OUT with no known return date
+  cv_typical: 0.4211            # median per-game FP CV, estimated by the backtest
+  default_gp_rate: 0.85       # availability for players with no NBA history (rookies)
+
+# Section 8. Curve is fit on fit_season and tested on test_season, so the test is out of sample.
+backtest:
+  fit_season: "2024-25"
+  fit_espn_season: 2025
+  fit_adp_csv: data/adp_2025.csv
+  test_season: "2025-26"
+  test_espn_season: 2026
+  test_adp_csv: data/adp_prev.csv
+  n_grid: [5, 10, 15, 20, 30]
+  k_grid: [6, 9, 12, 15, 20]
+  min_rest_games: 10          # need this many later games to score a prediction
+
+trade:
+  acceptance_threshold: 0.1   # partner may lose up to this many expected wins
+  user_loss_prune_margin: 0.05   # finder: skip if your ROS value drops by more than this fraction of what you give
+  partner_loss_prune_margin: 0.15 # finder: skip if partner's ROS value drops by more than this fraction of what they give
+  max_full_evals_per_opponent: 300 # finder: cap on full evaluate() calls per opponent (best by ROS first)
+  verdict_accept: 0.10        # ΔE[wins] above this -> ACCEPT
+  verdict_decline: -0.10      # ΔE[wins] below this -> DECLINE; between -> FAIR-ISH
+  monte_carlo_sims: 10000
+  top_n_per_opponent: 5
+
+data:
+  adp_csv: data/adp.csv               # current-season ADP (platform ADP)
+  prev_adp_csv: data/adp_prev.csv     # last-season ADP or rank, used to fit the ADP->FPPG curve
+  cache_db: data/cache.sqlite
+  nba_min_request_interval_s: 1.0     # stats.nba.com rate limit
+  espn_cache_ttl_hours: 1           # rosters, injuries and this week's scores refresh hourly

@@ -1,0 +1,254 @@
+# Injury profiles: what an injury does to availability and production, from published NBA
+# research (see docs/injury_research.md for sources and how each number was derived).
+#
+# Matching, in file order, first profile wins:
+#   match       regexes for distinctive terms, searched in all text (ESPN injury type,
+#               detail, news blurb, season outlook)
+#   match_type  regexes searched only in ESPN's structured "type detail" string (e.g.
+#               "Right Knee Surgery"), for generic words like knee/back/head that news
+#               text uses in other senses ("expected back", "head coach")
+#
+# Fields
+#   typical_days      recovery time used when ESPN gives no return date
+#   rtp               probability the player returns this season at all (caps P(back))
+#   year1 / year2     effects in the first / second 12 months after return:
+#     fppg            multiplier on the ADP-curve half of the prior (ESPN's projection
+#                     half is left alone - it already reflects their analysts' view)
+#     avail           multiplier on games-played rate (reinjury, rest, load management)
+#     sigma           multiplier on game-to-game volatility (minutes limits, rust)
+#   ramp_days / ramp  first ramp_days after return: expected output x ramp
+#                     (minutes restrictions), applied through effective availability
+#   confidence        high = NBA cohort studies; medium = small NBA samples or other
+#                     pro leagues; low = assumption, no basketball data found
+
+profiles:
+  achilles:
+    label: Achilles tendon rupture
+    match: ['achilles']
+    typical_days: 330
+    rtp: 0.75
+    year1: {fppg: 0.80, avail: 0.80, sigma: 1.15}
+    year2: {fppg: 0.90, avail: 0.90, sigma: 1.05}
+    ramp_days: 30
+    ramp: 0.75
+    confidence: high
+
+  acl:
+    label: ACL tear
+    match: ['\bacl\b', 'anterior cruciate']
+    typical_days: 372
+    rtp: 0.85
+    year1: {fppg: 0.83, avail: 0.78, sigma: 1.10}
+    year2: {fppg: 0.95, avail: 0.92, sigma: 1.0}
+    ramp_days: 30
+    ramp: 0.80
+    confidence: high
+
+  patellar_quad_tendon:
+    label: Patellar or quadriceps tendon rupture
+    match: ['patellar tendon', 'quad(riceps)? tendon']
+    typical_days: 365
+    rtp: 0.75
+    year1: {fppg: 0.90, avail: 0.75, sigma: 1.10}
+    year2: {fppg: 0.95, avail: 0.85, sigma: 1.0}
+    ramp_days: 30
+    ramp: 0.80
+    confidence: medium
+
+  microfracture:
+    label: Knee cartilage / microfracture
+    match: ['microfracture', 'cartilage']
+    typical_days: 150
+    rtp: 0.80
+    year1: {fppg: 0.88, avail: 0.85, sigma: 1.05}
+    year2: {fppg: 0.92, avail: 0.90, sigma: 1.0}
+    ramp_days: 21
+    ramp: 0.85
+    confidence: medium
+
+  meniscus:
+    label: Meniscus tear / surgery
+    match: ['menisc', 'knee surgery']
+    match_type: ['knee.*surgery']   # most knee surgeries without an ACL are meniscal
+    typical_days: 42
+    rtp: 0.91
+    year1: {fppg: 0.82, avail: 0.80, sigma: 1.05}
+    year2: {fppg: 0.92, avail: 0.85, sigma: 1.0}
+    ramp_days: 14
+    ramp: 0.85
+    confidence: high
+
+  lumbar_disc:
+    label: Lumbar disc herniation / back surgery
+    match: ['discectomy', 'herniated disc', 'back surgery', 'spine surgery']
+    match_type: ['back.*surgery']
+    typical_days: 150
+    rtp: 0.86
+    year1: {fppg: 0.90, avail: 0.85, sigma: 1.05}
+    year2: {fppg: 0.95, avail: 0.92, sigma: 1.0}
+    ramp_days: 14
+    ramp: 0.85
+    confidence: medium
+
+  foot_fracture:
+    label: Foot fracture (Jones / navicular / metatarsal)
+    match: ['jones fracture', 'navicular', 'metatarsal', 'foot surgery']
+    match_type: ['foot.*fractur', 'foot.*surgery']
+    typical_days: 70
+    rtp: 0.88
+    year1: {fppg: 1.0, avail: 0.90, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 0.95, sigma: 1.0}
+    ramp_days: 10
+    ramp: 0.90
+    confidence: medium
+
+  plantar_fascia:
+    label: Plantar fascia tear
+    match: ['plantar']
+    typical_days: 35
+    rtp: 0.98
+    year1: {fppg: 0.97, avail: 0.93, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 7
+    ramp: 0.90
+    confidence: low
+
+  shoulder_surgery:
+    label: Shoulder surgery (labrum / rotator cuff)
+    match: ['labrum', 'rotator cuff', 'shoulder surgery']
+    match_type: ['shoulder.*surgery']
+    typical_days: 150
+    rtp: 0.94
+    year1: {fppg: 0.95, avail: 0.92, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 0.97, sigma: 1.0}
+    ramp_days: 14
+    ramp: 0.90
+    confidence: low
+
+  hand_wrist_fracture:
+    label: Hand / wrist / finger fracture
+    match: []
+    match_type: ['(hand|wrist|finger|thumb)']
+    typical_days: 35
+    rtp: 0.98
+    year1: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 0
+    ramp: 1.0
+    confidence: high
+
+  calf_strain:
+    label: Calf strain
+    match: ['calf']
+    typical_days: 18
+    rtp: 1.0
+    year1: {fppg: 0.98, avail: 0.94, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 0.98, sigma: 1.0}
+    ramp_days: 7
+    ramp: 0.90
+    confidence: medium
+
+  hamstring:
+    label: Hamstring strain
+    match: ['hamstring']
+    typical_days: 14
+    rtp: 1.0
+    year1: {fppg: 0.96, avail: 0.92, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 0.97, sigma: 1.0}
+    ramp_days: 7
+    ramp: 0.90
+    confidence: medium
+
+  groin_hip:
+    label: Groin / adductor / hip
+    match: ['groin', 'adductor']
+    match_type: ['hip']
+    typical_days: 14
+    rtp: 1.0
+    year1: {fppg: 0.98, avail: 0.94, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 7
+    ramp: 0.95
+    confidence: low
+
+  concussion:
+    label: Concussion
+    match: ['concussion']
+    match_type: ['head']
+    typical_days: 8
+    rtp: 1.0
+    year1: {fppg: 1.0, avail: 0.99, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 0
+    ramp: 1.0
+    confidence: high
+
+  ankle_sprain:
+    label: Ankle sprain
+    match: []
+    match_type: ['ankle']
+    typical_days: 7
+    rtp: 1.0
+    year1: {fppg: 1.0, avail: 0.97, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 0
+    ramp: 1.0
+    confidence: high
+
+  knee_other:
+    label: Knee (other / unspecified)
+    match: []
+    match_type: ['knee']
+    typical_days: 14
+    rtp: 0.98
+    year1: {fppg: 0.97, avail: 0.93, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 0.97, sigma: 1.0}
+    ramp_days: 7
+    ramp: 0.90
+    confidence: low
+
+  back_other:
+    label: Back (non-surgical)
+    match: []
+    match_type: ['back']
+    typical_days: 7
+    rtp: 1.0
+    year1: {fppg: 1.0, avail: 0.96, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 0
+    ramp: 1.0
+    confidence: low
+
+  long_absence:
+    label: Long absence last season (cause unknown)
+    match: []
+    typical_days: 0
+    rtp: 1.0
+    year1: {fppg: 0.95, avail: 0.92, sigma: 1.05}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 0
+    ramp: 1.0
+    confidence: low
+
+  other:
+    label: Other / unspecified
+    match: []
+    typical_days: 10
+    rtp: 1.0
+    year1: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
+    ramp_days: 0
+    ramp: 1.0
+    confidence: low
+
+# Which profiles count as "major" for history: their year1/year2 effects follow the player
+# after he returns, even once he is off the injury report.
+major: [achilles, acl, patellar_quad_tendon, microfracture, meniscus, lumbar_disc, foot_fracture,
+        shoulder_surgery, long_absence]
+
+# Return-date slippage: P(back) ramps from 0 on ESPN's return date R to rtp on R + w,
+# w = frac * days out, clamped to [min_days, max_days].
+return_window: {frac: 0.3, min_days: 4, max_days: 30}
+
+# A gap of at least this many team games between appearances last season counts as a long absence.
+long_absence_games: 20
