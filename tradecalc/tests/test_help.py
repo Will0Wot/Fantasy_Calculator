@@ -15,3 +15,18 @@ def test_help_text_renders_with_and_without_validation():
         assert isinstance(md, str) and len(md) > 100
     assert "9.70" in H.help_accuracy(cfg, val) and "sim-validate" in H.help_accuracy(cfg, None)
     assert f"{cfg['trade']['verdict_accept']:.2f}" in H.trade_builder(cfg)
+
+
+def test_methodology_math_renders_in_streamlit():
+    """Streamlit's markdown only treats $$ as a display block when the delimiters are on their own
+    lines; `$$a = ...` spanning lines breaks the rest of the page (it did, from section 1.4 on)."""
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[2] / "docs" / "methodology.md").read_text()
+    for line in text.splitlines():
+        if "$$" in line:
+            assert line.strip() == "$$", f"display math delimiter not on its own line: {line[:60]}"
+    body = re.sub(r"\n\$\$\n.*?\n\$\$\n", "\n", text, flags=re.S)       # inline math must pair up per paragraph
+    for para in body.split("\n\n"):
+        assert para.replace("\\$", "").count("$") % 2 == 0, f"unbalanced $ in: {para[:80]}"

@@ -29,7 +29,9 @@ $w$ (PTS +1, REB +1, AST +2, STL +4, BLK +4, TO −2, FGM +2, FGA −1, FTM +1, 
 
 Three estimates of fantasy points per game are averaged (missing ones dropped):
 
-$$\text{prior}_i = \operatorname{mean}\{\, m_i\, c(r_i),\;\; \hat f^{\text{ESPN}}_i,\;\; m_i\, \hat f^{\text{min}}_i \,\}$$
+$$
+\text{prior}_i = \operatorname{mean}\{\, m_i\, c(r_i),\;\; \hat f^{\text{ESPN}}_i,\;\; m_i\, \hat f^{\text{min}}_i \,\}
+$$
 
 * **ADP curve** $c(r)$: monotone decreasing map from draft rank to FPPG, fitted on last season
   (rank → actual FPPG): 9-rank rolling mean, then isotonic regression weighted by games played
@@ -42,7 +44,9 @@ $$\text{prior}_i = \operatorname{mean}\{\, m_i\, c(r_i),\;\; \hat f^{\text{ESPN}
 
 ### 1.2 Shrinkage of live data
 
-$$\mu_i = \frac{k\,\text{prior}_i + n_i\, \bar x_i}{k + n_i}, \qquad k = 6$$
+$$
+\mu_i = \frac{k\,\text{prior}_i + n_i\, \bar x_i}{k + n_i}, \qquad k = 6
+$$
 
 with $n_i$ games played this season and $\bar x_i$ their mean FP. **Role-change override**: if
 $|\text{MPG}_{\text{last 5}} - \text{MPG}_{\text{season}}| / \text{MPG}_{\text{season}} > 0.20$
@@ -58,7 +62,9 @@ the running estimate changed MAE by at most ±0.1%.
 
 ### 1.3 Per-game spread
 
-$$\sigma_i = \frac{k\, \text{cv}\, \mu_i + n_i\, s_i}{k + n_i}, \qquad \text{cv} = 0.42$$
+$$
+\sigma_i = \frac{k\, \text{cv}\, \mu_i + n_i\, s_i}{k + n_i}, \qquad \text{cv} = 0.42
+$$
 
 $s_i$ = sample s.d. of the player's FP this season; cv = median coefficient of variation among the
 top-156 players by FPPG (CV falls steeply with FPPG, so it is estimated on rosterable players).
@@ -67,9 +73,13 @@ top-156 players by FPPG (CV falls steeply with FPPG, so it is estimated on roste
 
 **Base rate** (calibrated by the audit, `model/availability.py: calibrated_rate`):
 
-$$a^{(0)}_i = \alpha_0 + \beta_0\, h_i, \qquad
-a^{(1)}_i = \alpha_1 + \beta_1\, \frac{10\, h_i + n_i}{10 + G_t}, \qquad
-a_i = (1 - \omega)\, a^{(0)}_i + \omega\, a^{(1)}_i,\;\; \omega = \min(G_t/10, 1)$$
+$$
+\begin{gathered}
+a^{(0)}_i = \alpha_0 + \beta_0\, h_i \\
+a^{(1)}_i = \alpha_1 + \beta_1\, \frac{10\, h_i + n_i}{10 + G_t} \\
+a_i = (1 - \omega)\, a^{(0)}_i + \omega\, a^{(1)}_i, \quad \omega = \min(G_t/10, 1)
+\end{gathered}
+$$
 
 $h_i$ = games-played rate over the last two seasons with each season's longest absence removed;
 $G_t$ = team games played this season. Fitted on 2021-22 → 2022-23:
@@ -102,7 +112,13 @@ implemented by rescaling the base rate (bounded to ×[0.7, 1.3]).
 Each day $d$, with $A_d$ the players whose NBA team plays, the number of usable slots $S_d$ is the
 size of the best legal lineup if all of $A_d$ played: the assignment problem
 
-$$\max_{x}\; \sum_{i \in A_d}\sum_{s} x_{is}\, \mu_i \quad \text{s.t.}\; \sum_s x_{is} \le 1,\; \sum_i x_{is} \le 1,\; x_{is} = 0 \text{ if } i \text{ ineligible for slot } s$$
+$$
+\begin{aligned}
+&\max_{x}\; \sum_{i \in A_d}\sum_{s} x_{is}\, \mu_i \\
+&\text{s.t.}\; \sum_s x_{is} \le 1,\;\; \sum_i x_{is} \le 1, \\
+&\phantom{\text{s.t.}}\; x_{is} = 0 \text{ if } i \text{ is not eligible for slot } s
+\end{aligned}
+$$
 
 (PG, SG, SF, PF, C, G, F, 3×UTIL; Hungarian algorithm, `scipy.optimize.linear_sum_assignment`).
 
@@ -112,7 +128,9 @@ $\psi$ = share of absences known before lock (`lineup.fill_in`, 1.0), player $i$
 with probability $r_i = 1 - \psi(1 - a_i)$ and starts if fewer than $S_d$ higher-ranked players look
 available. With $K_{<i}$ that count (a Poisson-binomial variable),
 
-$$P(i \text{ starts and plays on } d) = a_i(d)\; P(K_{<i} < S_d),$$
+$$
+P(i \text{ starts and plays on } d) = a_i(d)\; P(K_{<i} < S_d),
+$$
 
 computed exactly by a recursion over $k \in \{0, \dots, S_d\}$ ($k = S_d$ absorbing), vectorized over
 the days of the week (`trade/lineup.py: _fill_in_week`). Position rules enter through $S_d$ only
@@ -125,7 +143,9 @@ undervalued depth. Started games per player: $g_i = \sum_d r_i P(K_{<i} < S_d)$.
 With $q_{id} = a_i(d) P(K_{<i} < S_d)$, the weekly mean is $M = \sum_i \mu_i \sum_d q_{id}$. The game-level
 variance is
 
-$$V_{\text{games}} = \sum_i \sigma_i^2 \sum_d q_{id} \;+\; \sum_d \operatorname{Var}\!\Big(\sum_i \mu_i Z_{id}\Big),$$
+$$
+V_{\text{games}} = \sum_i \sigma_i^2 \sum_d q_{id} \;+\; \sum_d \operatorname{Var}\!\Big(\sum_i \mu_i Z_{id}\Big),
+$$
 
 where $Z_{id}$ indicates "starts and plays". The second term is exact: the same recursion carries the
 first two moments of the accumulated points for each $k$, so the negative correlation between a
@@ -135,20 +155,34 @@ probability on random matchups).
 
 The audit found $V_{\text{games}}$ too small. Two terms were added (`trade/matchup.py`):
 
-$$U = \sum_i \Big(\mu_i\, s_i \sum_d q_{id}\Big)^2, \quad s_i = \sqrt{\tfrac{k}{k + n_i}} \qquad \text{(uncertain true level, shared by a player's games)}$$
+$$
+\begin{gathered}
+U = \sum_i \Big(\mu_i\, s_i \sum_d q_{id}\Big)^2, \quad s_i = \sqrt{\tfrac{k}{k + n_i}} \\
+\text{(uncertain true level, shared by a player's games)}
+\end{gathered}
+$$
 
-$$R = \sum_i v_i^2\, G_i (G_i - 1)\, \bar a_i (1 - \bar a_i) \qquad \text{(absences cluster within a week)}$$
+$$
+\begin{gathered}
+R = \sum_i v_i^2\, G_i (G_i - 1)\, \bar a_i (1 - \bar a_i) \\
+\text{(absences cluster within a week)}
+\end{gathered}
+$$
 
 $G_i = \sum_d P(K_{<i} < S_d)$ is the number of starts he would get if healthy, $\bar a_i$ his average
 availability over them, and $v_i = (\mu_i - \mu_{(11)})^+$ his value over the best player outside
 the top 10 (a sitting starter is replaced, so only the gap is lost). Then
 
-$$V = V_{\text{games}} + \tau^2 U + \rho R .$$
+$$
+V = V_{\text{games}} + \tau^2 U + \rho R .
+$$
 
 ### 1.7 Matchup and season
 
-$$P(\text{win}_w) = \Phi\!\left(\beta\, \frac{M_{\text{you}} - M_{\text{opp}}}{\sqrt{V_{\text{you}} + V_{\text{opp}}}}\right),
-\qquad \mathbb E[\text{wins}] = \sum_{w \ge \text{now}} P(\text{win}_w)$$
+$$
+P(\text{win}_w) = \Phi\!\left(\beta\, \frac{M_{\text{you}} - M_{\text{opp}}}{\sqrt{V_{\text{you}} + V_{\text{opp}}}}\right),
+\qquad \mathbb E[\text{wins}] = \sum_{w \ge \text{now}} P(\text{win}_w)
+$$
 
 Points already scored in the current week (ESPN, days before today) are added to $M$.
 $\tau = 0.3$ and $\rho = 2.0$ were fitted on 2022-23 mock leagues (§5) by weekly log-loss and
@@ -165,7 +199,9 @@ For trade $T$, rosters are swapped, then each team's active roster (non-IR) is r
 excess ⇒ drop lowest ROS value $\mu_i \sum_j a_i(d_j)$; shortfall ⇒ sign the best free agent by
 ROS value; incoming OUT players fill an empty IR slot. Then
 
-$$\Delta = \mathbb E[\text{wins}\mid \text{after}] - \mathbb E[\text{wins}\mid \text{before}]$$
+$$
+\Delta = \mathbb E[\text{wins}\mid \text{after}] - \mathbb E[\text{wins}\mid \text{before}]
+$$
 
 for both teams, recomputing every affected week (including weeks against the partner).
 Verdict: ACCEPT if $\Delta_{\text{you}} \ge 0.10$, DECLINE if $\le -0.10$. Explanation reasons are
@@ -187,8 +223,10 @@ $\Delta_{\text{you}} \ge 0.10$ and $\Delta_{\text{partner}} \ge -0.10$; rank by 
 For each stat $s$ (per-minute FGA, FTA, REB, AST, STL, BLK, TOV; 3PA share of FGA; 2P%, 3P%, FT%)
 with numerator $x$ and exposure $e$ (minutes or attempts):
 
-$$\pi_i = \frac{K_s\, \bar r_{g(i)} + x^{\text{prev}}_i}{K_s + e^{\text{prev}}_i}, \qquad
-\hat r_i = \frac{(K_s + 0.5\, e^{\text{prev}}_i)\,\pi_i + x^{\text{cur}}_i}{K_s + 0.5\, e^{\text{prev}}_i + e^{\text{cur}}_i}$$
+$$
+\pi_i = \frac{K_s\, \bar r_{g(i)} + x^{\text{prev}}_i}{K_s + e^{\text{prev}}_i}, \qquad
+\hat r_i = \frac{(K_s + 0.5\, e^{\text{prev}}_i)\,\pi_i + x^{\text{cur}}_i}{K_s + 0.5\, e^{\text{prev}}_i + e^{\text{cur}}_i}
+$$
 
 $\bar r_{g}$ = position-group mean (G/F/C). $K_s$ is chosen by **split-half prediction** (odd games
 predict even games, exposure-weighted squared error over a grid) on each fit season and averaged:
@@ -208,8 +246,13 @@ rotations carry (fitted).
 Per simulation, minutes follow a regression fitted on two seasons of as-of context
 ($R^2 \approx 0.1$; single-game minutes are noisy):
 
-$$m = \hat m + c + \beta_{\text{same}} A_{\text{same}} + \beta_{\text{other}} A_{\text{other}} + \beta_{\text{b2b}} \mathbb 1_{\text{b2b}}
-+ \beta_{\star}\, (|\text{margin}| - 12)^+ \mathbb 1_{\hat m \ge 30} + \beta_{\text{bench}}(|\text{margin}| - 12)^+ \mathbb 1_{\hat m < 20} + \varepsilon$$
+$$
+\begin{aligned}
+m = \hat m + c &+ \beta_{\text{same}} A_{\text{same}} + \beta_{\text{other}} A_{\text{other}} + \beta_{\text{b2b}} \mathbb 1_{\text{b2b}} \\
+&+ \beta_{\star}\, (|\text{margin}| - 12)^+ \mathbb 1_{\hat m \ge 30} \\
+&+ \beta_{\text{bench}}(|\text{margin}| - 12)^+ \mathbb 1_{\hat m < 20} + \varepsilon
+\end{aligned}
+$$
 
 $A$ = expected minutes of absent teammates (same position group / other); $\varepsilon \sim N(0, \sigma(\hat m))$
 by minutes bucket (4.3–5.8). Truncated to [0, 48]; then each team's simulated minutes are rescaled to
@@ -217,7 +260,9 @@ $241 \times 0.933$ (share of team minutes played by the modelled rotation, fitte
 
 ### 2.3 Usage redistribution
 
-$$r_{is} = \hat r_{is}\,(1 + \gamma_s\, \text{miss}_{s}), \qquad \text{miss}_s = \frac{\sum_{j \text{ absent}} \hat r_{js}\hat m_j}{\sum_{j \in \text{rotation}} \hat r_{js}\hat m_j}$$
+$$
+r_{is} = \hat r_{is}\,(1 + \gamma_s\, \text{miss}_{s}), \qquad \text{miss}_s = \frac{\sum_{j \text{ absent}} \hat r_{js}\hat m_j}{\sum_{j \in \text{rotation}} \hat r_{js}\hat m_j}
+$$
 
 $\gamma_s$ by WLS of (game rate / baseline − 1) on miss share: FGA 0.37, FTA 0.55, AST 0.33, REB 0.11.
 
@@ -234,7 +279,12 @@ on/off DRtg difference shrunk by $\text{MIN}/(\text{MIN} + 2000)$.
 
 $P(\text{play}) = a_i(d) \times$ rest factor: logistic model of a healthy rotation player sitting one game,
 
-$$\operatorname{logit} P(\text{sit}) = \theta_0 + \theta_1 \text{b2b} + \theta_2 (\text{age}-28)^+ + \theta_3\, \text{b2b}(\text{age}-28)^+ + \theta_4 \tfrac{\hat m}{30} + \theta_5\, \text{b2b}\tfrac{\hat m}{30}$$
+$$
+\begin{aligned}
+\operatorname{logit} P(\text{sit}) = \theta_0 &+ \theta_1 \text{b2b} + \theta_2 (\text{age}-28)^+ + \theta_3\, \text{b2b}(\text{age}-28)^+ \\
+&+ \theta_4 \tfrac{\hat m}{30} + \theta_5\, \text{b2b}\tfrac{\hat m}{30}
+\end{aligned}
+$$
 
 plus a shrunk coach effect on back-to-backs; the factor is $P(\text{no sit}\mid \text{game}) / P(\text{no sit}\mid \text{average game})$.
 
@@ -243,9 +293,23 @@ plus a shrunk coach effect on back-to-backs; the factor is $P(\text{no sit}\mid 
 Per NBA game and draw: margin $\sim N(\mu_m, 14.05)$, $\mu_m$ from season net ratings × pace + 1.5 home;
 pace shock $\sim N(1, 0.039)$; joint absences of both rotations; minutes (§2.2); then
 
-$$\text{FGA} \sim \text{Pois}(\lambda), \;\; \text{3PA} \sim \text{Bin}(\text{FGA}, p_3^a),\;\; \text{2PM} \sim \text{Bin}(\text{FGA}-\text{3PA}, p_2),\;\; \text{3PM} \sim \text{Bin}(\text{3PA}, p_3)$$
-$$\text{FTA} \sim \text{NB}(\lambda_{FT}, r = 3.4),\;\; \text{FTM} \sim \text{Bin}(\text{FTA}, p_{FT}),\;\; \text{REB, AST, STL, BLK} \sim \text{NB},\;\; \text{TOV} \sim \text{Pois}$$
-$$\text{PTS} = 2\,\text{2PM} + 3\,\text{3PM} + \text{FTM}$$
+$$
+\begin{gathered}
+\text{FGA} \sim \text{Pois}(\lambda), \qquad \text{3PA} \sim \text{Bin}(\text{FGA}, p_3^a) \\
+\text{2PM} \sim \text{Bin}(\text{FGA}-\text{3PA}, p_2), \qquad \text{3PM} \sim \text{Bin}(\text{3PA}, p_3)
+\end{gathered}
+$$
+
+$$
+\begin{gathered}
+\text{FTA} \sim \text{NB}(\lambda_{FT}, r = 3.4), \qquad \text{FTM} \sim \text{Bin}(\text{FTA}, p_{FT}) \\
+\text{REB, AST, STL, BLK} \sim \text{NB}, \qquad \text{TOV} \sim \text{Pois}
+\end{gathered}
+$$
+
+$$
+\text{PTS} = 2\,\text{2PM} + 3\,\text{3PM} + \text{FTM}
+$$
 
 $\lambda = \hat r \cdot m \cdot (\text{usage}) \cdot f \cdot \text{pace} \cdot \kappa \cdot \phi_i \cdot \zeta_i$:
 $\kappa = 0.965$ global rate calibration (fitted on the prior season with true availability);
@@ -264,7 +328,12 @@ compares teams. Points already scored this week are added.
 The anchor scales counting stats so a player's FPPG moves toward ESPN's preseason projection,
 fading with games played:
 
-$$\zeta_i = \operatorname{clip}\!\left(\frac{(1-w)\,\text{FP}^{\text{eng}}_i + w\,\text{FP}^{\text{ESPN}}_i}{\text{FP}^{\text{eng}}_i}, 0.6, 1.6\right), \qquad w = w_0\,\frac{10}{10 + n_i}$$
+$$
+\begin{gathered}
+\zeta_i = \operatorname{clip}\!\left(\frac{(1-w)\,\text{FP}^{\text{eng}}_i + w\,\text{FP}^{\text{ESPN}}_i}{\text{FP}^{\text{eng}}_i}, 0.6, 1.6\right) \\
+w = w_0\,\frac{10}{10 + n_i}
+\end{gathered}
+$$
 
 On the tuning season (2023-24) every $w_0 > 0$ made the preseason team ranking worse
 (Spearman 0.29 at $w_0 = 0$, 0.26 at 0.5, 0.20 at 0.8 and 1.0), so $w_0 = 0$
