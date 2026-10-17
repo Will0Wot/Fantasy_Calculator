@@ -453,32 +453,54 @@ with tab_find:
     from tradecalc.trade.evaluate import format_result
     from tradecalc.trade.finder import find_trades
 
-    c1, c2, c3 = st.columns(3)
-    who = c1.selectbox("Partner", ["All teams"] + [t for t in team_ids if t != ME],
-                       format_func=lambda t: t if isinstance(t, str) else team_label[t])
+    if st.session_state.get("finder_for") not in team_ids or st.session_state.get("finder_me") != ME:
+        st.session_state.finder_for = ME      # follow "Your team" when it changes
+        st.session_state.finder_me = ME
+    c0, c1, c2, c3 = st.columns([3, 3, 2, 2])
+    me_f = c0.selectbox("Find trades for", team_ids, key="finder_for", format_func=lambda t: state.team_name(t),
+                        help="Any team in the league. Defaults to your team.")
+    partner_ids = [t for t in team_ids if t != me_f]
+    who = c1.selectbox("Trade partner", ["All teams"] + partner_ids,
+                       format_func=lambda t: f"All {len(partner_ids)} other teams" if isinstance(t, str) else team_label[t])
     max_size = c2.radio("Max players per side", [1, 2], index=1, horizontal=True)
     top = c3.number_input("Trades per team", 1, 20, cfg["trade"]["top_n_per_opponent"])
-    st.caption(f"Keeps trades that raise your expected wins while the partner loses at most "
-               f"{cfg['trade']['acceptance_threshold']:.2f} wins (a stand-in for 'they might say yes').")
+    st.caption(f"Keeps trades that raise **{state.team_name(me_f)}**'s expected wins while the partner loses at most "
+               f"{cfg['trade']['acceptance_threshold']:.2f} wins (a stand-in for 'they might say yes'). "
+               f"Scanning all teams takes about 30 seconds.")
 
     if st.button("Find trades", type="primary"):
         partners = None if who == "All teams" else [who]
-        n = len(partners or [t for t in team_ids if t != ME])
+        plist = partners or partner_ids
         bar = st.progress(0.0, "Scanning…")
-        done = []
+        counts = {}
 
         def progress(p, evaluated, kept):
-            done.append(p)
-            bar.progress(len(done) / n, f"{state.team_name(p)}: {evaluated} evaluated, {kept} kept")
+            counts[p] = (evaluated, kept)
+            bar.progress(len(counts) / len(plist), f"{state.team_name(p)}: {evaluated} evaluated, {kept} kept")
 
-        st.session_state.found = find_trades(ME, state, max_size=max_size, partners=partners, top=int(top),
-                                             progress=progress)
+        res = find_trades(me_f, state, max_size=max_size, partners=plist, top=int(top), progress=progress)
+        st.session_state.found = (me_f, res, counts)
         bar.empty()
 
     found = st.session_state.get("found")
+    if found and (not isinstance(found, tuple) or found[0] != me_f):
+        found = None
     if found:
+        _, res, counts = found
+        st.markdown(f"#### Results for {state.team_name(me_f)}")
+        summary = []
+        for partner in res:
+            rs = res[partner]
+            ev, kept = counts.get(partner, (0, 0))
+            best = max((r.you.d_wins for r in rs), default=None)
+            summary.append({"Partner": state.team_name(partner), "Trades checked": ev, "Good trades found": kept,
+                            "Best for you": best,
+                            "Note": "" if rs else "No trade helps you that they'd likely accept"})
+        sm = pd.DataFrame(summary).sort_values("Best for you", ascending=False, na_position="last")
+        st.dataframe(sm.style.format({"Best for you": lambda v: "—" if pd.isna(v) else f"{v:+.2f} wins"}),
+                     hide_index=True, use_container_width=True)
         rows = []
-        for partner, rs in found.items():
+        for partner, rs in res.items():
             for r in rs:
                 rows.append({"Partner": state.team_name(partner),
                              "You give": " + ".join(P[i].name for i in r.trade.give),
@@ -486,15 +508,25 @@ with tab_find:
                              "Your Δ wins": r.you.d_wins, "Their Δ wins": r.partner.d_wins,
                              "Your Δ pts/wk": r.you.d_pts, "_r": r})
         if not rows:
-            st.warning("No trades met the criteria.")
+            st.warning("No trades met the criteria with any team.")
         else:
+            from tradecalc.trade.explain import explain as _explain
+
             df = pd.DataFrame(rows).sort_values("Your Δ wins", ascending=False)
+            show_p = st.multiselect("Show partners", sorted(df["Partner"].unique()),
+                                    placeholder="All partners with good trades")
+            if show_p:
+                df = df[df["Partner"].isin(show_p)]
             st.dataframe(df.drop(columns="_r").style.format(
                 {"Your Δ wins": "{:+.2f}", "Their Δ wins": "{:+.2f}", "Your Δ pts/wk": "{:+.1f}"}),
                 hide_index=True, use_container_width=True)
-            for _, row in df.head(15).iterrows():
-                with st.expander(f"{row['You give']} → {row['You get']} ({row['Partner']}, {row['Your Δ wins']:+.2f} wins)"):
-                    st.text(format_result(row["_r"], state))
+            st.caption("Open a trade below for the full explanation. You can also rebuild it in the Trade builder.")
+            icon = {1: ":green[▲] ", -1: ":red[▼] ", 0: ""}
+            for _, row in df.head(20).iterrows():
+                with st.expander(f"{row['You give']} → {row['You get']} · {row['Partner']} · {row['Your Δ wins']:+.2f} wins"):
+                    ex = _explain(row["_r"], state)
+                    st.markdown(ex.paragraph)
+                    st.markdown("\n".join(f"- {icon[s]}{b}" for s, b in zip(ex.signs, ex.bullets)))
 
 # ---------------------------------------------------------------------------- Players
 with tab_players:

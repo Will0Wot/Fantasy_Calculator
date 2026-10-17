@@ -138,6 +138,9 @@ def trade_builder(cfg) -> str:
 def trade_finder(cfg) -> str:
     t = cfg["trade"]
     return f"""
+**Pick any team** in "Find trades for" (it starts on your team), then one partner or all of them. Every
+partner appears in the results summary, including teams where no good trade exists.
+
 **How trades are found**
 1. **Try every small trade** with each team: 1-for-1, 2-for-1, 1-for-2 and 2-for-2. That's roughly 9,500
    combinations per team.
