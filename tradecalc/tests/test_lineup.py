@@ -42,9 +42,27 @@ def test_crowded_night_benches_lowest(week_dates):
 
 def test_out_player_not_started_and_returns_midweek(week_dates):
     ps = [make_player(1, 1, "AAA", ["PG"], 40, a=0.9, out_games=2)]
-    st = make_state(ps, {d: {"AAA", "ZZZ"} for d in week_dates[:4]})
+    st = make_state(ps, {d: {"AAA", "ZZZ"} for d in week_dates[:4]}, cfg_overrides={"lineup.fill_in": None})
     res = simulate_week([1], st.cal.weeks[0], st)
     assert res.g[0] == 2 and abs(res.sum_a[0] - 1.8) < 1e-9
+    # with fill-ins he only takes a slot on the days he is known to play (benched when ruled out)
+    st = make_state(ps, {d: {"AAA", "ZZZ"} for d in week_dates[:4]})
+    res = simulate_week([1], st.cal.weeks[0], st)
+    assert abs(res.g[0] - 1.8) < 1e-9 and abs(res.sum_a[0] - 1.8) < 1e-9
+
+
+def test_fill_in_bench_player_starts_when_starter_out(week_dates):
+    # 11 guards for 10 slots: the 11th only plays when someone ahead of him sits
+    ps = [make_player(i, 1, "AAA", ["PG", "SG", "SF", "PF", "C"], 40 - i, a=0.8) for i in range(1, 12)]
+    st = make_state(ps, {week_dates[0]: {"AAA", "ZZZ"}})
+    res = simulate_week([p.espn_id for p in ps], st.cal.weeks[0], st)
+    from scipy.stats import binom
+
+    assert abs(res.sum_a[-1] - 0.8 * binom.cdf(9, 10, 0.8)) < 1e-9     # P(<10 of the 10 above play)
+    assert abs(res.sum_a[:10].sum() - 8.0) < 1e-9                     # the top 10 always start when they play
+    no_fill = simulate_week([p.espn_id for p in ps], st.cal.weeks[0],
+                            make_state(ps, {week_dates[0]: {"AAA", "ZZZ"}}, cfg_overrides={"lineup.fill_in": None}))
+    assert no_fill.sum_a[-1] == 0
 
 
 def test_from_day_only_counts_remaining_days(week_dates):
@@ -78,3 +96,37 @@ def test_weekly_lock_picks_one_lineup(week_dates):
     daily = make_state(ps, games)
     g = simulate_week(ids, daily.cal.weeks[0], daily).starts()
     assert g[2] == 1                # daily: he starts on his empty Friday
+
+
+def test_fill_in_matches_brute_force():
+    """Expected points and variance of the fill-in recursion equal full enumeration."""
+    import itertools
+
+    import numpy as np
+
+    from tradecalc.trade.lineup import _fill_in_week
+
+    rng = np.random.default_rng(3)
+    for _ in range(5):
+        n, days, slots = 6, 2, 3
+        a = rng.uniform(0, 1, (n, days)) * (rng.random((n, days)) < 0.8)
+        mu = rng.uniform(5, 50, n)
+        psi = float(rng.choice([1.0, 0.6]))
+        res = _fill_in_week(list(range(n)), a, mu, np.ones((n, slots), dtype=bool), psi)
+        m1 = var = 0.0
+        for t in range(days):
+            idx = [i for i in np.argsort(-mu, kind="stable") if a[i, t] > 0]
+            S = min(slots, len(idx))
+            e1 = e2 = 0.0
+            for states in itertools.product(range(3), repeat=len(idx)):   # plays / surprise scratch / benched
+                pr, k, pts = 1.0, 0, 0.0
+                for i, s in zip(idx, states):
+                    pr *= (a[i, t], (1 - psi) * (1 - a[i, t]), psi * (1 - a[i, t]))[s]
+                    if s < 2:
+                        pts += mu[i] if (k < S and s == 0) else 0.0
+                        k += 1
+                e1 += pr * pts
+                e2 += pr * pts * pts
+            m1 += e1
+            var += e2 - e1 ** 2
+        assert abs(float(mu @ res.sum_a) - m1) < 1e-9 and abs(res.var_mu - var) < 1e-6

@@ -15,7 +15,7 @@ import pandas as pd
 from tradecalc.ingest import adp as adp_mod
 from tradecalc.ingest import nba
 from tradecalc.ingest.league import LeagueData, Player
-from tradecalc.model.availability import Availability, availability, games_played_rate
+from tradecalc.model.availability import Availability, availability, calibrated_rate, games_played_rate
 from tradecalc.model.blend import blend
 from tradecalc.model.injury import (InjuryView, injury_view, load_profiles, log_current_injuries,
                                     logged_history, long_absences, manual_history)
@@ -223,6 +223,15 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
             for t in teams:
                 team_games.setdefault(t, []).append(d)
     team_game_index = {t: {d: j for j, d in enumerate(ds)} for t, ds in team_games.items()}
+    # this season so far: team games played and each player's appearances (for availability)
+    team_played = {}
+    for d, teams in cal.games_by_day.items():
+        if d < today:
+            for t_ in teams:
+                team_played[t_] = team_played.get(t_, 0) + 1
+    _played = (cur_logs[cur_logs["min"] > 0].assign(key=lambda d_: d_.player_name.map(norm_name))
+               if len(cur_logs) else pd.DataFrame(columns=["key", "game_date"]))
+    cur_apps = _played.groupby("key").size().to_dict()
 
     players: dict[int, PlayerState] = {}
     for p in league.players.values():
@@ -239,7 +248,14 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
             rd = o.get("return_date")
             if isinstance(rd, str) and rd:
                 return_date = date.fromisoformat(rd)
-        av = availability(status, gp_by_name.get(key), cap=m["availability_cap"], dtd_prob=m["dtd_availability"],
+        acal = m.get("availability_calibration")
+        if acal:
+            ng = int(cur_apps.get(key, 0))
+            tg = team_played.get(p.pro_team, 0)
+            gp_rate = calibrated_rate(gp_by_name.get(key), ng, tg, acal)
+        else:
+            gp_rate = gp_by_name.get(key)
+        av = availability(status, gp_rate, cap=m["availability_cap"], dtd_prob=m["dtd_availability"],
                           out_default_games=m["out_default_games"], games_until_return=games_out,
                           default_rate=m["default_gp_rate"], return_date=return_date, today=today,
                           window=ic.window, rtp=view.rtp, typical_days=view.typical_days,
@@ -262,8 +278,8 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
         # middle of the season, as this season's real availability takes over.
         model_games = sum(av.for_game(j, d) for j, d in enumerate(js))
         espn_gp = (p.projection or {}).get("GP")
-        team_played = max(82 - len(js), 0)
-        w = 0.5 * max(0.0, 1 - team_played / 41)
+        played_so_far = max(82 - len(js), 0)
+        w = 0.5 * max(0.0, 1 - played_so_far / 41)
         if espn_gp and model_games > 0 and w > 0 and js:
             espn_games = min(float(espn_gp), 82) * len(js) / 82
             target = (1 - w) * model_games + w * espn_games

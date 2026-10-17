@@ -56,7 +56,7 @@ class Availability:
             in_dtd = (d < self.dtd_until) if (self.dtd_until and d) else j == self.out_games
             if in_dtd:
                 p = min(p, self.dtd_next)
-        return p
+        return min(p, 1.0)
 
     @property
     def is_injured(self) -> bool:
@@ -134,3 +134,36 @@ def availability(
         until = return_date if return_date and today and return_date > today else None
         return Availability(base, dtd_next=dtd_prob, dtd_until=until, modifiers=modifiers)
     return Availability(base, modifiers=modifiers)
+
+
+def calibrated_rate(hist_rate: float | None, apps: int, team_games: int, cal: dict) -> float:
+    """Availability base rate, calibrated by the model audit (fitted on 2021-22 -> 2022-23).
+
+    Raw games-played rates are far too extreme: for fantasy-relevant players, last season's rate
+    (longest absence excluded) barely predicts next season (preseason line ~ flat), and in-season
+    only ~38% of a player's deviation from average carries forward. So:
+      preseason  a0 = pre_intercept + pre_slope * hist_rate
+      in-season  a1 = in_intercept + in_slope * (prior_games * hist_rate + apps) / (prior_games + team_games)
+    blended by w = min(team_games / prior_games, 1). Known injuries are applied on top of this.
+    """
+    h = 0.85 if hist_rate is None or hist_rate != hist_rate else float(hist_rate)
+    a0 = cal["pre_intercept"] + cal["pre_slope"] * h
+    if team_games <= 0:
+        return a0
+    k = cal.get("prior_games", 10)
+    rate = (k * h + apps) / (k + max(team_games, apps))
+    a1 = cal["in_intercept"] + cal["in_slope"] * rate
+    w = min(team_games / k, 1.0)
+    return (1 - w) * a0 + w * a1
+
+
+def espn_games_blend(a: float, espn_gp: float | None, team_played: int, cap: float = 0.95,
+                     weight: float = 0.5) -> float:
+    """Second opinion on games played: blend the base rate with ESPN's projected games share.
+    ESPN's weight starts at `weight` before the season and fades to 0 at mid-season (41 team games).
+    (The live season model does the equivalent on expected remaining games; see values.py.)"""
+    if not espn_gp:
+        return a
+    lam = weight * max(0.0, 1 - team_played / 41)
+    return float(min((1 - lam) * a + lam * min(float(espn_gp), 82) / 82, cap))
+

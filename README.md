@@ -21,6 +21,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 | `tradecalc sim-fit` | Fit the projection engine on the two latest seasons |
 | `tradecalc simulate [--a ID] [--b ID] [--week N] [--sims 10000]` | Monte Carlo of any two fantasy teams |
 | `tradecalc sim-validate` | Out-of-sample validation of the engine on last season |
+| `tradecalc forecast-test` | Backtest the league forecast on mock leagues from last season |
+| `tradecalc audit [--baseline] [--quick]` | Full model audit on 2023-24, 2024-25, 2025-26 + break tests (Model audit tab) |
 
 ## App
 
@@ -28,8 +30,10 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/streamlit run tradecalc/app.py
 ```
 
-Tabs: Matchup (this week + rest of season), Simulate (projection-engine Monte Carlo for any two
-teams), Trade builder, Trade finder, Players, Injuries (with editable overrides and injury history).
+Tabs: Matchup (this week + rest of season), League forecast, Simulate (projection-engine Monte Carlo
+for any two teams), Trade builder, Trade finder, Players, Injuries (with editable overrides and injury
+history), Forecast tests, Model audit (multi-season accuracy tests, before/after, break tests;
+report in `docs/model_audit.md`), Methodology (every formula: `docs/methodology.md`), Help.
 
 ## Projection engine
 Game-by-game simulation with per-stat models, minutes from rotations/depth charts, teammate usage,

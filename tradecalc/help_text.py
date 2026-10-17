@@ -26,7 +26,8 @@ and the same for every remaining week.
 2. **Will he play?** Each player gets a chance of suiting up, built from how often he's played the last two seasons,
    plus any current injury (see the Injuries tab).
 3. **Who starts?** For each day, it picks your best legal lineup from players whose NBA team plays that day.
-   Bench games don't count, so a crowded night can leave good players on the bench.
+   Bench games don't count, so a crowded night can leave good players on the bench. If a starter is ruled out
+   before tip-off, your next-best player with a game fills in, so depth is worth something.
 4. **Win chance.** Your expected total and how much it could swing are compared with your opponent's.
 
 **Dates:** only days from today onward are projected. Days already played this week use the real points ESPN
@@ -265,6 +266,9 @@ def help_accuracy(cfg, validation: dict | None) -> str:
     k = cfg["model"]["k"]
     parts = ["""
 ### Why you can trust it
+
+*For the full data-science audit (three past seasons, before/after numbers, attempts to break the model) see the
+**🔬 Model audit** tab; every formula is in **📐 Methodology**.*
 
 The best test of a forecast is to give it only what was known at the time, and check it against what actually
 happened. That's how this model was tested: on the entire **2025-26 season**, with every prediction made using

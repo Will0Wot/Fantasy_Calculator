@@ -127,9 +127,10 @@ st.info(f"📅 {state.week_status()}"
 
 # --- tabs --------------------------------------------------------------------------------
 
-tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_test, tab_help = st.tabs(
+(tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_test, tab_audit, tab_method,
+ tab_help) = st.tabs(
     ["📅 Matchup", "🏆 League forecast", "🎲 Simulate", "🔁 Trade builder", "🔎 Trade finder", "📊 Players",
-     "🩹 Injuries", "🧪 Forecast tests", "❓ Help & accuracy"])
+     "🩹 Injuries", "🧪 Forecast tests", "🔬 Model audit", "📐 Methodology", "❓ Help & accuracy"])
 
 from tradecalc import help_text as H  # noqa: E402
 
@@ -168,7 +169,7 @@ with tab_match:
     left_from = max(wk.start, state.today)
     st.caption(f"Days remaining in this projection: {left_from:%a %b %d} – {wk.end:%a %b %d}"
                + (f" · already scored through {last1:%a %b %d}: you {b1:,.0f}, them {b2:,.0f}" if (b1 or b2) else ""))
-    pn = p_win(d1.M, d1.V, d2.M, d2.V)
+    pn = p_win(d1.M, d1.V, d2.M, d2.V, cfg['model'].get('matchup_shrink', 1.0))
     c1, c2, c3 = st.columns(3)
     c1.metric(state.team_name(ME), f"{d1.M:,.0f} pts", f"± {d1.V ** 0.5:.0f}", delta_color="off")
     c2.metric(state.team_name(opp), f"{d2.M:,.0f} pts", f"± {d2.V ** 0.5:.0f}", delta_color="off")
@@ -183,11 +184,11 @@ with tab_match:
             rows.append({"Player": p.name, "Team": p.pro_team, "Pos": "/".join(p.positions), "Role": p.role,
                          "MIN": p.minutes, "FPPG": p.mu,
                          "Games left": state.cal.team_games_in_week(p.pro_team, wk, from_day=state.today),
-                         "Week games": state.cal.team_games_in_week(p.pro_team, wk), "Starts": int(g),
+                         "Week games": state.cal.team_games_in_week(p.pro_team, wk), "Starts": round(float(g), 1),
                          "Exp. pts": sa * p.mu, "Notes": "; ".join(p.flags)})
         return pd.DataFrame(rows).sort_values("Exp. pts", ascending=False)
 
-    fmt = {"FPPG": "{:.1f}", "MIN": "{:.1f}", "Exp. pts": "{:.0f}"}
+    fmt = {"FPPG": "{:.1f}", "MIN": "{:.1f}", "Exp. pts": "{:.0f}", "Starts": "{:.1f}"}
     l, r = st.columns(2)
     l.subheader("Your lineup")
     l.dataframe(lineup_df(d1).style.format(fmt), hide_index=True, use_container_width=True)
@@ -801,6 +802,34 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
 `tradecalc forecast-test`. Limits: mock leagues, not your league; managers never trade or pick up free agents in the
 test; lineups use a simple position rule.*
 """)
+
+# ---------------------------------------------------------------------------- Model audit
+DOCS = Path(__file__).resolve().parent.parent / "docs"
+
+
+def _doc(name: str) -> str | None:
+    try:
+        return (DOCS / name).read_text()
+    except FileNotFoundError:
+        return None
+
+
+with tab_audit:
+    from tradecalc.audit import page as audit_page
+    from tradecalc.audit.suite import AUDIT_PATH, BASELINE_PATH
+    from tradecalc.audit.suite import load as load_audit
+
+    st.header("Model audit")
+    audit_page.render(st, load_audit(AUDIT_PATH), load_audit(BASELINE_PATH), _doc("model_audit.md"))
+
+# ---------------------------------------------------------------------------- Methodology
+with tab_method:
+    md = _doc("methodology.md")
+    if md:
+        st.download_button("Download as Markdown", md, file_name="methodology.md")
+        st.markdown(md)
+    else:
+        st.info("docs/methodology.md not found.")
 
 # ---------------------------------------------------------------------------- Help & accuracy
 with tab_help:

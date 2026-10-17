@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tradecalc.sim.engine import SeasonLayer
+from tradecalc.sim.engine import SEASON_LAYER, SeasonLayer
 from tradecalc.sim.forecast_test import greedy_lineup, play_weeks, round_robin, standings
 
 
@@ -45,7 +45,7 @@ def test_season_layer_matches_measured_absence_share_and_form():
     out_share = 1 - L.on[:, 8:, :].mean()          # after burn-in (everyone starts healthy)
     assert out_share == pytest.approx(0.175, abs=0.02)
     assert L.talent.mean() == pytest.approx(1.0, abs=0.01)
-    assert np.log(L.talent).std() == pytest.approx(0.30, abs=0.02)
+    assert np.log(L.talent).std() == pytest.approx(SEASON_LAYER["talent_sd"], abs=0.02)
     # form uncertainty shrinks with games played
     L2 = SeasonLayer(["a"], 2, 4000, rng, {"a": 60})
     assert np.log(L2.talent).std() < 0.2

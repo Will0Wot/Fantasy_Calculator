@@ -105,6 +105,9 @@ def build_world_history(H, params: dict, asof: str, season: str, prev: str) -> W
     imp = defender_impacts(H.onoff[H.onoff.season == prev]) if len(H.onoff) else pd.Series(dtype=float)
     id2key = P.reset_index().set_index("nba_id")["key"].to_dict()
     impact = {id2key[i]: v for i, v in imp.items() if i in id2key}
+    if params.get("_proj_fp"):
+        games = cur.assign(key=cur.player_name.map(norm_name)).groupby("key").size().to_dict()
+        P = apply_anchor(P, params["_proj_fp"], games, H.scoring, params)
     w = World(date.fromisoformat(asof), P, dict(rotation), dm, _team_strength(tl_cur if len(tl_cur) >= 60 else tl_prev),
               impact, params, H.scoring)
     w.b2b_days = _b2b_days_from_logs(tl[tl.season == season])
@@ -242,7 +245,8 @@ def simulate_games(world: World, games: list[tuple[date, str, str]], avail, n: i
                 if interest is not None and k not in interest:
                     continue
                 row = sub.iloc[j]
-                box = _sample_box(rng, row, M[:, j], miss, ub, def_f, pace_ratio * rate_cal * form_of(k), eff, disp, n)
+                scale = row["scale"] if "scale" in row.index and row["scale"] == row["scale"] else 1.0
+                box = _sample_box(rng, row, M[:, j], miss, ub, def_f, pace_ratio * rate_cal * form_of(k) * scale, eff, disp, n)
                 fp = sum(wt * box[s.lower()] for s, wt in w.items())
                 m = pl[:, j]
                 fp_out[(k, d)] = fp
@@ -496,6 +500,13 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
         P.loc[top, "exp_min"] = trim_rotation(P.loc[top, "exp_min"].to_numpy(dtype=float), total)
     rotation = {t: sub[sub.exp_min >= 6].sort_values("exp_min", ascending=False).index[:13].tolist()
                 for t, sub in P.groupby("team")}
+    from tradecalc.model.scoring import fantasy_points
+
+    proj_fp = {norm_name(p.name): fantasy_points(lp.projection, H.scoring)
+               for p in state.players.values() if (lp := state.league.players.get(p.espn_id)) is not None
+               and lp.projection.get("GP")}
+    cur_games = cur.assign(key=cur.player_name.map(norm_name)).groupby("key").size().to_dict() if len(cur) else {}
+    P = apply_anchor(P, proj_fp, cur_games, H.scoring, params)
     tl = H.team_logs
     tl_cur, tl_prev = tl[(tl.season == season) & (tl.game_date < today)], tl[tl.season == prev]
     dm = estimate_defense(tl_cur, params["def_k"], tl_prev)
@@ -594,7 +605,7 @@ def minutes_projection(world: World) -> pd.DataFrame:
     rows = []
     for k, r in world.players.iterrows():
         rates = {s: r[s] for s in STATS}
-        fp = fantasy(expected_box(float(r["exp_min"]), rates), world.scoring) * cal
+        fp = fantasy(expected_box(float(r["exp_min"]), rates), world.scoring) * cal * float(r.get("scale", 1.0) or 1.0)
         depth = r.get("depth")
         rows.append({"key": k, "minutes": float(r["exp_min"]), "fppg_min": fp, "depth": depth,
                      "role": role_of(float(r["exp_min"]), depth)})
@@ -609,8 +620,9 @@ SEASON_LAYER = {
     "long_share": 0.175,
     "spell_weeks": 3.5,
     # season-long form: lognormal sd, shrinking with games already played (fitted in
-    # sim/forecast_test.py on 2024-25 mock leagues)
-    "talent_sd": 0.30,
+    # sim/forecast_test.py on 2024-25 mock leagues; 0.30 before the audit fixed the preseason
+    # backtest world, whose missing injured players had needed the extra spread)
+    "talent_sd": 0.20,
     "talent_k": 20,
 }
 
@@ -647,3 +659,34 @@ class SeasonLayer:
             on = self.on[:, week_index, i]
             sims.fp[(k, d)] = fp * self.talent[:, i] * on
             sims.played[(k, d)] = sims.played[(k, d)] & on
+
+
+# --- ESPN preseason anchor (added by the model audit) ---------------------------------------
+
+def anchor_scale(fp_engine: float, fp_espn: float | None, games: int, anchor: dict | None) -> float:
+    """Multiplier on a player's counting stats so his fantasy points per game move toward ESPN's
+    preseason projection: target = (1 - w) * engine + w * ESPN, w = weight * G / (G + games).
+    The audit found the engine's own preseason view (last season + minutes) ordered teams worse
+    than ESPN's projections; the anchor fades as this season's games come in."""
+    if not anchor or fp_espn is None or fp_espn != fp_espn or fp_engine <= 1:
+        return 1.0
+    w = anchor["weight"] * anchor["games"] / (anchor["games"] + games)
+    return float(np.clip(((1 - w) * fp_engine + w * fp_espn) / fp_engine, 0.6, 1.6))
+
+
+def apply_anchor(P: pd.DataFrame, proj_fp: dict, games: dict, scoring: dict, params: dict) -> pd.DataFrame:
+    """Add a 'scale' column (see anchor_scale) to a World's player table."""
+    from tradecalc.config import load_config
+    from tradecalc.sim.project import expected_box, fantasy
+
+    anchor = params.get("espn_anchor") or load_config()["model"].get("espn_anchor")
+    if not anchor or not anchor.get("weight"):
+        return P.assign(scale=1.0)
+    cal = params.get("rate_calibration", 1.0)
+    scales = []
+    for k, r in P.iterrows():
+        fp = fantasy(expected_box(float(r["exp_min"]), {s: r[s] for s in STATS}), scoring) * cal
+        scales.append(anchor_scale(fp, proj_fp.get(k), int(games.get(k, 0)), anchor))
+    P = P.copy()
+    P["scale"] = scales
+    return P

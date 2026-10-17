@@ -36,7 +36,7 @@ def test_normal_matches_monte_carlo_on_20_matchups(week_dates):
         st = make_state(players, _random_schedule(rng, pro, week_dates))
         w = st.cal.weeks[0]
         d1, d2 = week_dist(st.rosters[1], w, st), week_dist(st.rosters[2], w, st)
-        p_norm = p_win(d1.M, d1.V, d2.M, d2.V)
+        p_norm = p_win(d1.M, d1.V_games, d2.M, d2.V_games)   # game-level noise only, as in the MC
         p_mc = p_win_monte_carlo(d1, d2, st, n=40000, seed=int(rng.integers(1 << 30)))
         diffs.append(abs(p_norm - p_mc))
     assert max(diffs) < 0.02, f"max |normal - MC| = {max(diffs):.4f}"
@@ -47,7 +47,13 @@ def test_week_distribution_formula(week_dates):
     st = make_state([p], {d: {"AAA", "Z"} for d in week_dates[:3]})
     d = week_dist([1], st.cal.weeks[0], st)
     assert d.M == pytest.approx(3 * 0.8 * 40)
-    assert d.V == pytest.approx(3 * (0.8 * 100 + 0.8 * 0.2 * 1600))
+    assert d.V_games == pytest.approx(3 * (0.8 * 100 + 0.8 * 0.2 * 1600))
+    m = st.cfg["model"]
+    # effective variance adds player-level uncertainty (n=0 -> s=1) and clustered absences
+    U = (3 * 0.8 * 40) ** 2
+    R = 1600 * 3 * 2 * 0.8 * 0.2
+    assert d.U == pytest.approx(U) and d.R == pytest.approx(R)
+    assert d.V == pytest.approx(d.V_games + m["proj_uncertainty"] ** 2 * U + m["absence_cluster"] * R)
 
 
 def _two_team_state(week_dates, n_weeks=1):

@@ -154,8 +154,8 @@ def lineup(
         p = st.players[pid]
         games = st.cal.team_games_in_week(p.pro_team, wk)
         typer.echo(f"{p.name:<26}{p.pro_team:<5}{'/'.join(p.positions):<12}{p.mu:6.1f}{p.avail.base:6.2f}"
-                   f"{games:7d}{int(g):8d}{sa * p.mu:8.1f}  {' '.join(p.flags)}")
-    typer.echo(f"Total starts {int(res.g.sum())}, expected FP {sum(sa * st.players[i].mu for i, sa in zip(res.ids, res.sum_a)):.0f}")
+                   f"{games:7d}{g:8.1f}{sa * p.mu:8.1f}  {' '.join(p.flags)}")
+    typer.echo(f"Total starts {res.g.sum():.1f}, expected FP {sum(sa * st.players[i].mu for i, sa in zip(res.ids, res.sum_a)):.0f}")
 
 
 def _match_player(name: str, st, pool_ids) -> int:
@@ -249,7 +249,7 @@ def week(
     opp = st.cal.opponents[me].get(wk.number)
     d1, d2 = week_dist(st.rosters[me], wk, st, st.today), week_dist(st.rosters[opp], wk, st, st.today)
     p = (p_win_monte_carlo(d1, d2, st, st.cfg["trade"]["monte_carlo_sims"], tie_value=st.cfg["league"]["tie_value"])
-         if precise else p_win(d1.M, d1.V, d2.M, d2.V))
+         if precise else p_win(d1.M, d1.V, d2.M, d2.V, st.cfg['model'].get('matchup_shrink', 1.0)))
     typer.secho(f"Week {wk.number} ({wk.start:%a %b %d} to {wk.end:%a %b %d}): {st.team_name(me)} vs {st.team_name(opp)}", bold=True)
     bm, bo = st.banked(me, wk)[0], st.banked(opp, wk)[0]
     if bm or bo:
@@ -257,7 +257,7 @@ def week(
     d1 = type(d1)(d1.M + bm, d1.V, d1.lineup)
     d2 = type(d2)(d2.M + bo, d2.V, d2.lineup)
     for label, tid, d in (("You", me, d1), ("Opponent", opp, d2)):
-        typer.echo(f"  {label:<9} {d.M:7.0f} ± {d.V ** 0.5:4.0f} pts, {int(d.lineup.g.sum())} starts left")
+        typer.echo(f"  {label:<9} {d.M:7.0f} ± {d.V ** 0.5:4.0f} pts, {d.lineup.g.sum():.0f} starts left")
     typer.secho(f"  Win probability: {p:.1%}", bold=True)
 
 
@@ -351,6 +351,41 @@ def forecast_test_cmd(leagues: int = typer.Option(12, help="Mock leagues for the
         typer.secho(f"\n{lab}", bold=True)
         typer.echo(pd.DataFrame(rep[f"metrics_{lab}"]).set_index("checkpoint").round(3).T.to_string())
     typer.echo(f"\nSaved {FT.report_path()} (shown in the app's Forecast tests tab).")
+
+
+@app.command()
+def audit(quick: bool = typer.Option(False, help="Fewer mock leagues and matchups (about half the time)."),
+          baseline: bool = typer.Option(False, help="Also re-run with the original (pre-audit) settings for comparison.")):
+    """Model audit: every component tested out of sample on the 2023-24, 2024-25 and 2025-26 seasons,
+    plus the break tests. Saves config/audit.json (and audit_baseline.json) for the app's Model audit tab."""
+
+    import tradecalc.config as C
+    from tradecalc.audit.breaks import run_all
+    from tradecalc.audit.data import audit_history
+    from tradecalc.audit.suite import AUDIT_PATH, BASELINE_PATH, baseline_config, run_audit, save
+
+    cfg, conn = _ctx()
+    cl = _client(cfg, conn)
+    H = audit_history(conn, cfg, cl)
+    runs = [("final", cfg, AUDIT_PATH)]
+    if baseline:
+        runs.append(("baseline", baseline_config(cfg), BASELINE_PATH))
+    load = C.load_config
+    for label, c, path in runs:
+        typer.secho(f"\n{label} model", bold=True)
+        C.load_config = (lambda path=None, _c=c: _c) if label == "baseline" else load
+        try:
+            rep = run_audit(conn, c, cl, H=H, log=typer.echo, quick=quick, anchor=label == "final",
+                            rolling_shrink=label == "final")
+        finally:
+            C.load_config = load
+        rep["breaks"] = run_all(H)
+        rep["settings"] = "original (pre-audit) model" if label == "baseline" else "final model"
+        save(rep, path)
+        typer.echo(f"Saved {path}")
+        if label == "final" and rep.get("matchup_shrink"):
+            typer.echo(f"Fitted matchup shrink on all seasons: {rep['matchup_shrink']['all']:.3f} "
+                       f"(league.yaml model.matchup_shrink is {cfg['model']['matchup_shrink']})")
 
 
 @app.command("seed-export")

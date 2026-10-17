@@ -10,6 +10,8 @@ season's with k games) and against the engine given actual minutes (isolates rat
 from __future__ import annotations
 
 import numpy as np
+
+from tradecalc.model.names import norm_name
 import pandas as pd
 
 from tradecalc.sim.context import build_context
@@ -30,6 +32,7 @@ def run(H, params: dict, test_season: str, prev_season: str, every: int = 4, sta
     prev_mpg = prev_logs.groupby("player_id")["min"].mean()
     prev_fp = prev_logs.groupby("player_id")["fp"].mean()
     mp, ub, scoring = params["minutes"], params["usage_beta"], H.scoring
+    key_of = logs.groupby("player_id")["player_name"].last().map(norm_name).to_dict()
 
     dates = sorted(cur_all["game_date"].unique())
     start = start or dates[min(len(dates) - 1, 25)]
@@ -70,14 +73,22 @@ def run(H, params: dict, test_season: str, prev_season: str, every: int = 4, sta
                 base_fp = cf["mean"]
             else:
                 base_fp = (k_baseline * pf + n * (cf["mean"] if n else 0)) / (k_baseline + n)
+            cal = params.get("rate_calibration", 1.0)
+            if params.get("_proj_fp"):
+                from tradecalc.sim.engine import anchor_scale
+                from tradecalc.config import load_config
+
+                fe = fantasy(expected_box(m_hat, rates), scoring) * cal
+                cal *= anchor_scale(fe, params["_proj_fp"].get(key_of.get(pid)),
+                                    int(r.apps), load_config()["model"].get("espn_anchor"))
             out.append({
                 "date": d, "player_id": pid, "apps": r.apps, "actual_fp": logs.loc[(logs.game_id == r.game_id) & (logs.player_id == pid), "fp"].iat[0],
                 "actual_min": r["min"], "exp_min": exp_min, "min_hat": m_hat,
                 "baseline": base_fp,
-                "engine": fantasy(expected_box(m_hat, rates), scoring),
-                "engine_no_absence_info": fantasy(expected_box(m_blind, rates_blind), scoring),
-                "engine_no_matchup": fantasy(expected_box(m_hat, adjusted_rates(base, ub, miss, None, 1.0)), scoring),
-                "engine_rates_x_actual_min": fantasy(expected_box(r["min"], rates), scoring),
+                "engine": fantasy(expected_box(m_hat, rates), scoring) * cal,
+                "engine_no_absence_info": fantasy(expected_box(m_blind, rates_blind), scoring) * cal,
+                "engine_no_matchup": fantasy(expected_box(m_hat, adjusted_rates(base, ub, miss, None, 1.0)), scoring) * cal,
+                "engine_rates_x_actual_min": fantasy(expected_box(r["min"], rates), scoring) * cal,
                 "plain_rates_x_actual_min": fantasy(expected_box(r["min"], rates_plain), scoring),
             })
     return pd.DataFrame(out)

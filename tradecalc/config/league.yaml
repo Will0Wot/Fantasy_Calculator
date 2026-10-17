@@ -56,6 +56,7 @@ roster:
 lineup:
   lock: daily                 # ESPN lineupLocktimeType INDIVIDUAL_GAME; modeled as daily
   weekly_games_cap: null      # no games-played / games-started cap
+  fill_in: 1.0                # share of absences known before lock, so a bench player starts instead (audit)
 
 # Fantasy week boundaries. Default rule: week 1 = opening day through the first Sunday,
 # then Monday-Sunday weeks; if that yields more weeks than the league has, the week
@@ -77,6 +78,17 @@ model:
   out_default_games: 10       # games missed when OUT with no known return date
   cv_typical: 0.4211            # median per-game FP CV, estimated by the backtest
   default_gp_rate: 0.85       # availability for players with no NBA history (rookies)
+  # Fitted by the model audit (tradecalc audit), on seasons before every test season:
+  availability_calibration:     # see model/availability.py calibrated_rate
+    pre_intercept: 0.735        # preseason: last season's rate barely predicts this season's
+    pre_slope: 0.047
+    in_intercept: 0.524         # in-season: ~38% of a player's deviation from average carries forward
+    in_slope: 0.378
+    prior_games: 10
+  matchup_shrink: 0.745         # projected gaps regress toward the middle: probit fit on 2022-23..2025-26 (audit, rolling origin)
+  proj_uncertainty: 0.3         # a player's true level is uncertain (shared by his games in a week)
+  absence_cluster: 2.0          # missed games come in clusters, not one at a time (fitted on 2022-23)
+  espn_anchor: {weight: 0.0, games: 10}   # engine: pull FPPG toward ESPN's projection; audit: any weight > 0 ranked teams worse
 
 # Section 8. Curve is fit on fit_season and tested on test_season, so the test is out of sample.
 backtest:

@@ -176,23 +176,36 @@ def build_world_preseason(H, params: dict, season: str, prev: str, values: dict[
     rates = _rates_by_key(H, cur.iloc[0:0], prv, params)
     lg_rates = rates.attrs["league"]
     prev_mpg = prv.assign(key=prv.player_name.map(norm_name)).groupby("key")["min"].mean()
-    for team, days in first_days.items():
-        g = cur[(cur.team == team) & (cur.game_date.isin(days))]
-        from tradecalc.sim.engine import _rates_from_projection
+    from tradecalc.sim.engine import _rates_from_projection
 
-        for k, name in {norm_name(n): n for n in g.player_name}.items():
-            pos = H.pos_of(name) or "F"
-            proj = PRESEASON_PROJ.get(k, {})
-            views = [float(prev_mpg[k])] if k in prev_mpg.index else []
-            if proj.get("MIN"):
-                views.append(float(proj["MIN"]))      # like the live engine: last season + ESPN minutes
-            exp_min = float(np.mean(views)) if views else 12.0
-            row = {"key": k, "name": name, "team": team, "pos": pos, "age": np.nan, "exp_min": exp_min}
-            if k in rates.index and k in prev_mpg.index:
-                row.update(rates.loc[k, STATS].to_dict())
-            else:
-                row.update(_rates_from_projection(proj) or lg_rates.get(pos, lg_rates["ALL"]))
-            rows.append(row)
+    def players_on(team, days):
+        g = cur[(cur.team == team) & (cur.game_date.isin(days))]
+        return {norm_name(n): n for n in g.player_name}.items()
+
+    # Players who missed the opening games (injured on opening night) are still on a roster: add
+    # everyone ESPN projected, on the team he first plays for (last season's team if he never
+    # does); his availability, not his absence from the world, decides how much he plays.
+    # (Found by the audit: without this an injured star scored 0 for the whole season.)
+    first_team = cur.sort_values("game_date").assign(key=cur.player_name.map(norm_name)).groupby("key")["team"].first()
+    prev_team = prv.sort_values("game_date").assign(key=prv.player_name.map(norm_name)).groupby("key")["team"].last()
+    seen = {k for team, days in first_days.items() for k, _ in players_on(team, days)}
+    relevant = sorted(values, key=lambda k: -values[k])[:300]          # fantasy-relevant by ESPN's preseason value
+    extra = [(first_team.get(k, prev_team.get(k)), k, k) for k in relevant if k not in seen]
+    todo = [(team, k, name) for team, days in first_days.items() for k, name in players_on(team, days)]
+    todo += [(team, k, name) for team, k, name in extra if team in first_days.index]
+    for team, k, name in todo:
+        pos = H.pos_of(name) or "F"
+        proj = PRESEASON_PROJ.get(k, {})
+        views = [float(prev_mpg[k])] if k in prev_mpg.index else []
+        if proj.get("MIN"):
+            views.append(float(proj["MIN"]))      # like the live engine: last season + ESPN minutes
+        exp_min = float(np.mean(views)) if views else 12.0
+        row = {"key": k, "name": name, "team": team, "pos": pos, "age": np.nan, "exp_min": exp_min}
+        if k in rates.index and k in prev_mpg.index:
+            row.update(rates.loc[k, STATS].to_dict())
+        else:
+            row.update(_rates_from_projection(proj) or lg_rates.get(pos, lg_rates["ALL"]))
+        rows.append(row)
     P = pd.DataFrame(rows).drop_duplicates("key").set_index("key")
     from tradecalc.sim.engine import trim_rotation
 
@@ -201,6 +214,10 @@ def build_world_preseason(H, params: dict, season: str, prev: str, values: dict[
         P.loc[top, "exp_min"] = trim_rotation(P.loc[top, "exp_min"].to_numpy(float), params.get("rotation_exp_min_sum", 282.0))
     rotation = {t: sub[sub.exp_min >= 6].sort_values("exp_min", ascending=False).index[:13].tolist()
                 for t, sub in P.groupby("team")}
+    if params.get("_proj_fp"):
+        from tradecalc.sim.engine import apply_anchor
+
+        P = apply_anchor(P, params["_proj_fp"], {}, H.scoring, params)
     tl = H.team_logs
     dm = estimate_defense(tl.iloc[0:0], params["def_k"], tl[tl.season == prev])
     imp = defender_impacts(H.onoff[H.onoff.season == prev]) if len(H.onoff) else pd.Series(dtype=float)
@@ -224,11 +241,23 @@ def _avail_fn(H, W: World, params, asof: str, season: str, prev: str):
     tl = H.team_logs[(H.team_logs.season == season) & (H.team_logs.game_date < asof)]
     tg = tl.groupby("team").size()
 
+    from tradecalc.config import load_config
+    from tradecalc.model.availability import calibrated_rate
+
+    acal = load_config()["model"].get("availability_calibration")
+
     def avail(k, team, d):
         a = apps.get(k, 0)
         n_team = tg.get(team, 0)
         base_prev = rate_prev.get(k, 0.85)
-        base = (10 * base_prev + a) / (10 + max(n_team, a)) if n_team else base_prev
+        if acal:
+            base = calibrated_rate(base_prev, a, n_team, acal)
+        else:
+            base = (10 * base_prev + a) / (10 + max(n_team, a)) if n_team else base_prev
+        # like the live model: ESPN's projected games played as a second opinion (fades by mid-season)
+        from tradecalc.model.availability import espn_games_blend
+
+        base = espn_games_blend(base, PRESEASON_PROJ.get(k, {}).get("GP"), n_team)
         row = W.players.loc[k] if k in W.players.index else None
         f = rest_factor(params, 26 if row is None else (row["age"] if row["age"] == row["age"] else 26),
                         20 if row is None else row["exp_min"], d in W.b2b_days.get(team, set()))

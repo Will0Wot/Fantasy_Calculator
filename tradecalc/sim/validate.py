@@ -100,8 +100,14 @@ def history_avail(H, W, params, asof: str, season: str):
         rate[(k, t)] = (10 * 0.85 + a) / (10 + max(team_games, a))
     P = W.players
 
+    from tradecalc.config import load_config
+
+    acal = load_config()["model"].get("availability_calibration")
+
     def avail(k, t, d):
         base = min(rate.get((k, t), 0.85), 0.97)
+        if acal:  # same calibration as the live model (raw rates are too extreme)
+            base = acal["in_intercept"] + acal["in_slope"] * base
         row = P.loc[k] if k in P.index else None
         b2b = d in W.b2b_days.get(t, set())
         f = rest_factor(params, row["age"] if row is not None else 26, row["exp_min"] if row is not None else 20, b2b)
