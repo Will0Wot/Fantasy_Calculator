@@ -45,6 +45,8 @@ class PlayerState:
     games_remaining: int = 0
     flags: list[str] = field(default_factory=list)
     injury: InjuryView | None = None
+    minutes: float = float("nan")    # projected minutes per game (depth chart, last season, this season)
+    role: str = ""                   # Starter / Rotation / Bench
 
 
 @dataclass
@@ -134,9 +136,13 @@ def load_injury_overrides(path) -> dict[str, dict]:
     return {norm_name(r["name"]): r for r in df.to_dict("records")}
 
 
-def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuries=None) -> LeagueState:
+def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuries=None,
+                minutes_proj: pd.DataFrame | None = None) -> LeagueState:
     """injuries: list of ingest.injuries.Injury (ESPN injury report), or None to use only
-    the fantasy API's injury status."""
+    the fantasy API's injury status.
+    minutes_proj: sim.engine.minutes_projection() output. When given, each player's prior is
+    the average of three views: ADP curve, ESPN projection, and projected minutes x his
+    per-minute production, so role (starter vs bench) and minutes changes move the projection."""
     lg, m, scoring = cfg["league"], cfg["model"], cfg["scoring"]
     cal = Calendar(league, cfg)
     real_today = date.today()
@@ -179,8 +185,14 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
     mult = pd.Series({norm_name(league.players[i].name): v.fppg_mult for i, v in views.items()})
     mult = mult.groupby(level=0).min().reindex(ptab.index).fillna(1.0)
     curve_adj = ptab["curve_fppg"] * mult
-    prior = pd.Series(np.where(ptab["proj_fppg"].notna(), (curve_adj + ptab["proj_fppg"]) / 2, curve_adj),
-                      index=ptab.index)
+    comps = [curve_adj, ptab["proj_fppg"]]
+    if minutes_proj is not None and len(minutes_proj):
+        mp = minutes_proj["fppg_min"].groupby(level=0).first()
+        ptab = ptab.reindex(ptab.index.union(mp.index))
+        curve_adj = curve_adj.reindex(ptab.index)
+        mult = mult.reindex(ptab.index).fillna(1.0)
+        comps = [curve_adj, ptab["proj_fppg"], mp.reindex(ptab.index) * mult]
+    prior = pd.concat(comps, axis=1).mean(axis=1, skipna=True).dropna()
 
     # --- live stats this season, keyed by normalized name.
     live = live_stats(cur_logs, scoring, recent_games=m["role_change_recent_games"]) if len(cur_logs) else None
@@ -243,12 +255,35 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
         if status != "ACTIVE":
             flags.insert(0, status.replace("_", "-").lower())
         js = team_games.get(p.pro_team, [])
+        # Second opinion on games played: blend the model's expected games with ESPN's projected
+        # games (scaled to the games left). ESPN's weight starts at 50% and fades to 0 by the
+        # middle of the season, as this season's real availability takes over.
+        model_games = sum(av.for_game(j, d) for j, d in enumerate(js))
+        espn_gp = (p.projection or {}).get("GP")
+        team_played = max(82 - len(js), 0)
+        w = 0.5 * max(0.0, 1 - team_played / 41)
+        if espn_gp and model_games > 0 and w > 0 and js:
+            espn_games = min(float(espn_gp), 82) * len(js) / 82
+            target = (1 - w) * model_games + w * espn_games
+            scale = float(np.clip(target / model_games, 0.7, 1.3))
+            if abs(scale - 1) > 0.01:
+                from dataclasses import replace as _replace
+
+                av = _replace(av, base=min(av.base * scale, m["availability_cap"]))
+                new_games = sum(av.for_game(j, d) for j, d in enumerate(js))
+                if abs(new_games - model_games) >= 2:
+                    flags.append(f"games: model {model_games:.0f}, ESPN {espn_games:.0f} → {new_games:.0f}")
         ros = sum(av.for_game(j, d) for j, d in enumerate(js)) * mu
         players[p.espn_id] = PlayerState(
             p.espn_id, p.name, p.pro_team, tuple(p.positions), p.on_team_id, status, mu, sigma, av,
             n=n, prior=float(prior.get(key, np.nan)), live=lv, role_change=role, ros_value=ros,
             games_remaining=len(js), flags=flags, injury=view,
         )
+        if minutes_proj is not None and key in minutes_proj.index:
+            mrow = minutes_proj.loc[key]
+            mrow = mrow.iloc[0] if isinstance(mrow, pd.DataFrame) else mrow
+            players[p.espn_id].minutes = float(mrow["minutes"])
+            players[p.espn_id].role = str(mrow["role"])
 
     rosters = {tid: list(t.roster) for tid, t in league.teams.items()}
     ir = {tid: {i for i in t.roster if league.players[i].lineup_slot == "IR"} for tid, t in league.teams.items()}

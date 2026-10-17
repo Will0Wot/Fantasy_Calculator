@@ -48,4 +48,18 @@ def load_state(force: bool = False, today: date | str | None = None, warn=None):
         injuries = []
     if isinstance(today, str):
         today = date.fromisoformat(today)
-    return build_state(cfg, conn, league, today, injuries)
+    state = build_state(cfg, conn, league, today, injuries)
+    # Second pass: projected minutes and role from the projection engine (depth chart, last
+    # season, ESPN projected minutes, this season's games) feed each player's projection.
+    try:
+        from tradecalc.sim.engine import minutes_projection
+        from tradecalc.sim.live import live_world
+        from tradecalc.sim.params import PARAMS_PATH
+
+        if PARAMS_PATH.exists():
+            world, coaches_now = live_world(conn, cfg, state)
+            state = build_state(cfg, conn, league, today, injuries, minutes_proj=minutes_projection(world))
+            state.world = (world, coaches_now)
+    except Exception as e:  # noqa: BLE001 - projections still work without the minutes view
+        (warn or (lambda m: print(m, file=sys.stderr)))(f"Minutes/role projections unavailable ({e}).")
+    return state

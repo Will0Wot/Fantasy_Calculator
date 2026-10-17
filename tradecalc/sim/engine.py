@@ -458,7 +458,7 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
         pos = pos or H.pos_of(k) or "F"
         row = {"key": k, "name": p.name if p is not None else k, "team": team, "nba_id": pid, "pos": pos,
                "age": H.age.get((pid, prev), np.nan) + 1 if pid is not None else np.nan, "exp_min": exp_min,
-               "espn_id": p.espn_id if p is not None else None}
+               "espn_id": p.espn_id if p is not None else None, "depth": dpt.get(k, (None, None))[1]}
         if k in rates.index and nba_minutes.get(k, 0) >= 100:
             row.update(rates.loc[k, STATS].to_dict())
         else:
@@ -553,3 +553,26 @@ def run_matchup(world: World, state, team_a: int, team_b: int, week, n: int = 10
     res.p_tie = float((res.totals[la] == res.totals[lb]).mean())
     res.days = days
     return res, sims
+
+
+def role_of(exp_min: float, depth) -> str:
+    """Starter: first on the depth chart or 28+ projected minutes; Rotation: 18+; else Bench."""
+    if (depth == depth and depth == 1) or exp_min >= 28:
+        return "Starter"
+    return "Rotation" if exp_min >= 18 else "Bench"
+
+
+def minutes_projection(world: World) -> pd.DataFrame:
+    """Per player (key = normalized name): projected minutes, fantasy points per game implied by
+    those minutes and his per-minute production, and his role."""
+    from tradecalc.sim.project import expected_box, fantasy
+
+    cal = world.params.get("rate_calibration", 1.0)
+    rows = []
+    for k, r in world.players.iterrows():
+        rates = {s: r[s] for s in STATS}
+        fp = fantasy(expected_box(float(r["exp_min"]), rates), world.scoring) * cal
+        depth = r.get("depth")
+        rows.append({"key": k, "minutes": float(r["exp_min"]), "fppg_min": fp, "depth": depth,
+                     "role": role_of(float(r["exp_min"]), depth)})
+    return pd.DataFrame(rows).set_index("key")

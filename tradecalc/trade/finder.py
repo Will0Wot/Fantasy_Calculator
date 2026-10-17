@@ -56,7 +56,9 @@ def find_trades(user: int, state, max_size: int = 2, partners: list[int] | None 
         results = []
         for _, trade in survivors:
             r = evaluate(trade, state)
-            if r.you.d_wins > 0 and r.partner.d_wins >= -cfg["acceptance_threshold"]:
+            # only trades the builder would call ACCEPT (not close calls)
+            if r.you.d_wins >= cfg.get("finder_min_gain", cfg["verdict_accept"]) \
+                    and r.partner.d_wins >= -cfg["acceptance_threshold"]:
                 results.append(r)
         results.sort(key=lambda r: -r.you.d_wins)
         out[partner] = results[:top]

@@ -19,7 +19,8 @@ def matchup(cfg) -> str:
 and the same for every remaining week.
 
 **How it's calculated (the quick "season model")**
-1. **How good is each player?** Before the season it uses expectations: draft position and ESPN's projection.
+1. **How good is each player?** Before the season it uses expectations: draft position, ESPN's projection, and
+   his projected minutes (starter or bench) × his per-minute production.
    As games are played, his real numbers take over. After {k} games, real results count as much as the preseason
    view, and they quickly dominate after that.
 2. **Will he play?** Each player gets a chance of suiting up, built from how often he's played the last two seasons,
@@ -148,7 +149,8 @@ partner appears in the results summary, including teams where no good trade exis
    using each player's rest-of-season value (points per game × expected games).
 3. **Full evaluation** of the best {t['max_full_evals_per_opponent']} survivors per team, exactly as in the Trade
    builder (rosters fixed, rest of season replayed for both teams).
-4. **Keep** trades where you gain expected wins and the other team loses no more than
+4. **Keep** trades that the Trade builder would call **Accept** (you gain at least
+   {t.get('finder_min_gain', t['verdict_accept']):.2f} expected wins) and where the other team loses no more than
    {t['acceptance_threshold']:.2f} wins. That's a stand-in for "they might say yes."
 5. **Rank** by how much you gain.
 
@@ -166,7 +168,11 @@ def players(cfg) -> str:
 **Columns**
 - **FPPG:** projected fantasy points per game. Before the season it's the preseason view; it shifts toward his
   real numbers as games are played ({cfg['model']['k']} games = half real, half preseason).
-- **Prior:** the preseason view on its own, an average of a draft-position curve and ESPN's projection.
+- **Role / MIN:** projected minutes per game and role: **Starter** (first on ESPN's depth chart or 28+ minutes),
+  **Rotation** (18–28) or **Bench** (under 18). Minutes come from this season's games, ESPN's depth chart, last
+  season and ESPN's projected minutes, and are trimmed so each team's rotation adds up to a real game.
+- **Prior:** the preseason view on its own, an average of three views: a draft-position curve, ESPN's projection,
+  and projected minutes × the player's per-minute production (so a bench role pulls the projection down).
 - **GP:** games played this season.
 - **Avail.:** chance he plays his team's next game (injuries, injury report, normal games-missed rate).
 - **Games left:** his NBA team's remaining regular-season games.

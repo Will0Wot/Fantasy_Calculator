@@ -108,6 +108,27 @@ def explain(r, state) -> Explanation:
                         f"versus {games_out:.0f} for the players you lose ({dg:+.0f}), counting the schedule, "
                         f"injuries and rest.",
                         f"the incoming players should play about {abs(dg):.0f} {'more' if dg > 0 else 'fewer'} games"))
+    def _role(i):
+        q = P[i]
+        m = getattr(q, "minutes", float("nan"))
+        r_ = getattr(q, "role", "") or "?"
+        return m, r_
+
+    mins_out = [(_role(i)[0], i) for i in give if _role(i)[0] == _role(i)[0]]
+    mins_in = [(_role(i)[0], i) for i in get if _role(i)[0] == _role(i)[0]]
+    if mins_out and mins_in:
+        m_out, m_in = sum(m for m, _ in mins_out), sum(m for m, _ in mins_in)
+        desc = lambda ids: "; ".join(f"{P[i].name} ~{_role(i)[0]:.0f} min ({_role(i)[1].lower()})" for i in ids)  # noqa: E731
+        roles_out = {_role(i)[1] for i in give}
+        roles_in = {_role(i)[1] for i in get}
+        dm = m_in - m_out
+        if abs(dm) >= 3 or roles_out != roles_in:
+            R.append(Reason(abs(dm) * 0.9 * 60, _sign(dm),
+                            f"Role and minutes: you give {desc(give)} and get {desc(get)} "
+                            f"({dm:+.0f} projected minutes per game).",
+                            f"you'd go from {m_out:.0f} to {m_in:.0f} projected minutes "
+                            f"({'/'.join(sorted(roles_out)).lower()} → {'/'.join(sorted(roles_in)).lower()})"))
+
     gap = lineup_per_week - raw_per_week
     if abs(gap) >= 8:
         if gap < 0:

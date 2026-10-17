@@ -98,6 +98,7 @@ trade:
   verdict_decline: -0.10      # ΔE[wins] below this -> DECLINE; between -> FAIR-ISH
   monte_carlo_sims: 10000
   top_n_per_opponent: 5
+  finder_min_gain: 0.10        # finder only lists trades gaining at least this many wins (= ACCEPT)
 
 data:
   adp_csv: data/adp.csv               # current-season ADP (platform ADP)

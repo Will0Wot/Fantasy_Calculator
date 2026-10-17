@@ -131,6 +131,8 @@ def get_world(today: str | None, nonce: int):
     from tradecalc.session import context
     from tradecalc.sim.live import live_world
 
+    if getattr(state, "world", None) is not None:   # built once with the league state
+        return state.world
     _, conn = context()
     return live_world(conn, cfg, state)
 
@@ -164,13 +166,14 @@ with tab_match:
         rows = []
         for pid, g, sa in zip(d.lineup.ids, d.lineup.g, d.lineup.sum_a):
             p = P[pid]
-            rows.append({"Player": p.name, "Team": p.pro_team, "Pos": "/".join(p.positions), "FPPG": p.mu,
+            rows.append({"Player": p.name, "Team": p.pro_team, "Pos": "/".join(p.positions), "Role": p.role,
+                         "MIN": p.minutes, "FPPG": p.mu,
                          "Games left": state.cal.team_games_in_week(p.pro_team, wk, from_day=state.today),
                          "Week games": state.cal.team_games_in_week(p.pro_team, wk), "Starts": int(g),
                          "Exp. pts": sa * p.mu, "Notes": "; ".join(p.flags)})
         return pd.DataFrame(rows).sort_values("Exp. pts", ascending=False)
 
-    fmt = {"FPPG": "{:.1f}", "Exp. pts": "{:.0f}"}
+    fmt = {"FPPG": "{:.1f}", "MIN": "{:.1f}", "Exp. pts": "{:.0f}"}
     l, r = st.columns(2)
     l.subheader("Your lineup")
     l.dataframe(lineup_df(d1).style.format(fmt), hide_index=True, use_container_width=True)
@@ -392,7 +395,8 @@ with tab_build:
 
     def label(pid):
         p = P[pid]
-        return f"{p.name} · {'/'.join(p.positions)} · {p.mu:.1f} FPPG" + (" · " + p.flags[0] if p.flags else "")
+        role = f" · {p.role} {p.minutes:.0f} min" if p.role else ""
+        return f"{p.name} · {'/'.join(p.positions)} · {p.mu:.1f} FPPG{role}" + (" · " + p.flags[0] if p.flags else "")
 
     a, b = st.columns(2)
     give = a.multiselect("You give", sorted(state.tradeable(ME), key=lambda i: -P[i].mu), format_func=label)
@@ -547,10 +551,12 @@ with tab_players:
         if q and q.lower() not in p.name.lower():
             continue
         rows.append({"Player": p.name, "Team": p.pro_team, "Pos": "/".join(p.positions), "Owner": owner(p),
+                     "Role": p.role, "MIN": p.minutes,
                      "FPPG": p.mu, "Prior": p.prior, "GP": p.n, "Avail.": a_now(p),
                      "Games left": p.games_remaining, "ROS value": p.ros_value, "Notes": "; ".join(p.flags)})
     df = pd.DataFrame(rows).sort_values("ROS value", ascending=False)
-    st.dataframe(df.style.format({"FPPG": "{:.1f}", "Prior": "{:.1f}", "Avail.": "{:.0%}", "ROS value": "{:,.0f}"}),
+    st.dataframe(df.style.format({"FPPG": "{:.1f}", "Prior": "{:.1f}", "MIN": "{:.1f}", "Avail.": "{:.0%}",
+                                  "ROS value": "{:,.0f}"}),
                  hide_index=True, use_container_width=True, height=600)
     rep = ", ".join(f"{k}: {v.name} ({v.mu:.1f})" for k, v in state.replacement.items())
     st.caption(f"Replacement level (best free agent): {rep}")
