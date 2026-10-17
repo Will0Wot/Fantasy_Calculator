@@ -301,6 +301,36 @@ def injuries(
         typer.echo(f"{p.name:<26}{owner:<16}{p.mu:6.1f}{a[0]:7.2f}{a[1]:8.2f}{a[2]:8.2f}  {'; '.join(p.flags)}")
 
 
+@app.command()
+def standings(
+    detailed: bool = typer.Option(False, help="Use the game-by-game engine (slower)."),
+    sims: int = typer.Option(None, help="Simulated seasons (default 10,000 quick / 2,000 detailed)."),
+    today: str = typer.Option(None, help="Pretend today is YYYY-MM-DD."),
+):
+    """League forecast: Monte Carlo of the rest of the season for every team."""
+    import time
+
+    from tradecalc.trade.standings import forecast, last_place_line
+
+    st = _state(today=today)
+    t0 = time.time()
+    if detailed:
+        from tradecalc.sim.live import live_world
+
+        cfg, conn = _ctx()
+        world, coaches_now = live_world(conn, cfg, st)
+        fc = forecast(st, n=sims or 2000, seed=0, method="detailed", world=world, coaches_now=coaches_now)
+    else:
+        fc = forecast(st, n=sims or 10000, seed=0)
+    typer.secho(f"\nLeague forecast ({fc.attrs['n']:,} seasons, {fc.attrs['method']}, {time.time() - t0:.1f}s)", bold=True)
+    typer.echo(f"{'#':>3} {'team':<30}{'record':>8}{'proj W':>8}{'80% range':>11}{'win lg':>8}{'top 3':>7}{'last':>7}")
+    for rank, r in fc.iterrows():
+        typer.echo(f"{rank:>3} {r.team:<30}{r.record:>8}{r.exp_wins:>8.1f}{f'{r.wins_p10:.0f}-{r.wins_p90:.0f}':>11}"
+                   f"{r.p_first:>8.0%}{r.p_top3:>7.0%}{r.p_last:>7.0%}")
+    typer.secho(f"\n🏆 {fc.iloc[0]['team']} wins the league in {fc.iloc[0]['p_first']:.0%} of seasons.", bold=True)
+    typer.secho(f"💩 {last_place_line(fc)}", bold=True)
+
+
 @app.command("sim-fit")
 def sim_fit():
     """Fit the projection engine (rates, usage, minutes, rest, coaches, noise) on recent seasons."""

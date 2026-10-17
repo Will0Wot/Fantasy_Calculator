@@ -39,6 +39,30 @@ For a more detailed game-by-game simulation of any matchup, use the **Simulate**
 """
 
 
+def league_forecast(cfg) -> str:
+    return f"""
+**What you're looking at:** the rest of the regular season played out thousands of times for all
+{cfg['league']['num_teams']} teams. Each team's chance to win the league, finish top 3 or finish last, and its
+projected number of wins.
+
+**How it's calculated**
+1. **Weeks already played** use the real results from ESPN. This week's points so far are counted.
+2. **Every remaining week,** each team's score is simulated:
+   - *Detailed:* every NBA game is played out (minutes, injuries, rest, teammates, opponents), and each team
+     starts its best lineup each day.
+   - *Quick:* each team's score is drawn from its projected weekly total and normal week-to-week swing.
+3. **Every scheduled matchup is decided** (a tie counts as half a win), and wins are added up.
+4. **There are no playoffs,** so the team with the most wins takes the league. Ties are broken by total points.
+5. **Repeat** 2,000 (detailed) or 10,000 (quick) times and count how often each team finishes where.
+
+**Reading it:** "Win league 35%" means that team finished first in 35% of simulated seasons. The heatmap shows
+the full spread of where each team ends up. Early in the season the ranges are wide; they tighten as weeks are
+played.
+
+**The last-place line** goes to the team ranked last by average finish. It's a projection, not a sentence.
+"""
+
+
 def simulate(params: dict | None) -> str:
     form = (params or {}).get("form_sd", 0.18)
     return f"""

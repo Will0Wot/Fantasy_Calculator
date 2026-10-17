@@ -73,17 +73,21 @@ P = state.players
 team_ids = sorted(state.rosters)
 team_label = {t: f"{state.team_name(t)} ({t})" for t in team_ids}
 
+try:
+    qp_team = int(st.query_params.get("team", cfg["league"]["my_team_id"]))
+except ValueError:
+    qp_team = cfg["league"]["my_team_id"]
+if st.session_state.get("my_team") not in team_ids:
+    st.session_state.my_team = qp_team if qp_team in team_ids else team_ids[0]
+_tc1, _tc2 = st.columns([2, 3])
+ME = _tc1.selectbox("👤 Your team", team_ids, key="my_team", format_func=lambda t: state.team_name(t),
+                    help="Matchup, trades and simulations are shown from this team's point of view. "
+                         "The page link remembers your choice, so bookmark it.")
+_tc2.caption("")
+_tc2.caption("Pick your team — every tab switches to it. Bookmark the link to come back to it.")
+if st.query_params.get("team") != str(ME):
+    st.query_params["team"] = str(ME)
 with st.sidebar:
-    try:
-        qp_team = int(st.query_params.get("team", cfg["league"]["my_team_id"]))
-    except ValueError:
-        qp_team = cfg["league"]["my_team_id"]
-    ME = st.selectbox("Your team", team_ids, index=team_ids.index(qp_team) if qp_team in team_ids else 0,
-                      format_func=lambda t: state.team_name(t),
-                      help="Everything (matchup, trades, simulations) is shown from this team's point of view. "
-                           "Bookmark the page after choosing: the link remembers your team.")
-    if st.query_params.get("team") != str(ME):
-        st.query_params["team"] = str(ME)
     if st.session_state.get("me") != ME:  # clear results computed for another team
         st.session_state.me = ME
         st.session_state.pop("found", None)
@@ -110,9 +114,9 @@ st.info(f"📅 {state.week_status()}"
 
 # --- tabs --------------------------------------------------------------------------------
 
-tab_match, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_help = st.tabs(
-    ["📅 Matchup", "🎲 Simulate", "🔁 Trade builder", "🔎 Trade finder", "📊 Players", "🩹 Injuries",
-     "❓ Help & accuracy"])
+tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_help = st.tabs(
+    ["📅 Matchup", "🏆 League forecast", "🎲 Simulate", "🔁 Trade builder", "🔎 Trade finder", "📊 Players",
+     "🩹 Injuries", "❓ Help & accuracy"])
 
 from tradecalc import help_text as H  # noqa: E402
 
@@ -182,6 +186,81 @@ with tab_match:
     st.dataframe(sched.style.format({"You": "{:.0f}", "Them": "{:.0f}", "Win %": "{:.0%}"}),
                  hide_index=True, use_container_width=True)
 
+# ---------------------------------------------------------------------------- League forecast
+@st.cache_resource(show_spinner=False, max_entries=6, ttl=3600)
+def league_forecast(today_key: str, nonce: int, method: str, n: int):
+    from tradecalc.trade.standings import forecast
+
+    if method == "detailed":
+        world, coaches_now = get_world(today_key, nonce)
+        return forecast(state, n=n, seed=None, method="detailed", world=world, coaches_now=coaches_now)
+    return forecast(state, n=n, seed=None, method="quick")
+
+
+with tab_league:
+    import altair as alt
+
+    from tradecalc.sim.params import PARAMS_PATH as _PP
+    from tradecalc.trade.standings import last_place_line
+
+    how_it_works(H.league_forecast(cfg))
+    fkey = (pretend or date.today().isoformat(), SH["nonce"])
+    saved = SH.get("forecast")  # detailed forecast shared by everyone for an hour
+    have_detailed = bool(saved and saved[0] == fkey and time.time() - saved[1] < 3600)
+    c1, c2 = st.columns([3, 2])
+    if _PP.exists():
+        if c2.button("Run detailed forecast (~30 s)" if not have_detailed else "Re-run detailed forecast",
+                     help="Game-by-game engine, 2,000 seasons. The result is shared with everyone for an hour."):
+            with st.spinner("Simulating every NBA game of the rest of the season, 2,000 times…"):
+                world, coaches_now = get_world(fkey[0], fkey[1])
+                from tradecalc.trade.standings import forecast as _fc
+
+                SH["forecast"] = (fkey, time.time(), _fc(state, n=2000, seed=None, method="detailed",
+                                                          world=world, coaches_now=coaches_now))
+            have_detailed = True
+    if have_detailed:
+        fc = SH["forecast"][2]
+        c1.success(f"Detailed game-by-game forecast · run "
+                   f"{time.strftime('%H:%M', time.localtime(SH['forecast'][1]))}")
+    else:
+        fc = league_forecast(fkey[0], fkey[1], "quick", 10000)
+        c1.info("Quick forecast (season model). Press **Run detailed forecast** for the game-by-game engine.")
+
+    champ, last = fc.iloc[0], fc.iloc[-1]
+    st.markdown(f"## 🏆 Projected champion: **{champ['team']}**")
+    st.markdown(f"Wins the league in **{champ['p_first']:.0%}** of simulated seasons, averaging "
+                f"**{champ['exp_wins']:.1f}** wins.")
+    st.error(f"💩 **{last_place_line(fc)}**  ·  projected last with {last['exp_wins']:.1f} wins "
+             f"({last['p_last']:.0%} chance of finishing dead last)")
+
+    show = pd.DataFrame({
+        "Team": [("👤 " if r.team_id == ME else "") + r.team for r in fc.itertuples()],
+        "Record": fc["record"],
+        "Projected wins": fc["exp_wins"],
+        "Wins range (80%)": [f"{a:.0f}–{b:.0f}" for a, b in zip(fc.wins_p10, fc.wins_p90)],
+        "Win league": fc["p_first"], "Top 3": fc["p_top3"], "Last place": fc["p_last"],
+        "Avg finish": fc["avg_rank"],
+    }, index=fc.index)
+    show.index.name = "Rank"
+    st.dataframe(show.style.format({"Projected wins": "{:.1f}", "Win league": "{:.0%}", "Top 3": "{:.0%}",
+                                    "Last place": "{:.0%}", "Avg finish": "{:.1f}"}), use_container_width=True)
+    st.caption(f"{fc.attrs['n']:,} simulated seasons · {fc.attrs['weeks_left']} weeks left · "
+               f"{'game-by-game engine' if fc.attrs['method'] == 'detailed' else 'season model'} · "
+               "no playoffs, so most wins takes the league (ties broken by total points). "
+               "Finished weeks use real results; this week's points so far are included. Updates hourly.")
+
+    st.markdown("**Where each team finishes** (share of simulated seasons)")
+    rd = fc.attrs["rank_dist"]
+    heat = pd.DataFrame([{"Team": state.team_name(t), "Finish": i + 1, "Share": v}
+                         for t, dist in rd.items() for i, v in enumerate(dist)])
+    order = list(fc["team"])
+    st.altair_chart(
+        alt.Chart(heat).mark_rect().encode(
+            x=alt.X("Finish:O", title="Final rank"), y=alt.Y("Team:N", sort=order, title=None),
+            color=alt.Color("Share:Q", scale=alt.Scale(scheme="blues"), legend=alt.Legend(format="%")),
+            tooltip=["Team", "Finish", alt.Tooltip("Share:Q", format=".0%")]),
+        use_container_width=True)
+
 # ---------------------------------------------------------------------------- Simulate
 with tab_sim:
     import altair as alt
@@ -200,13 +279,30 @@ with tab_sim:
         st.warning("Engine parameters not fitted yet. Run `tradecalc sim-fit` once, then reload.")
     else:
         rem = state.cal.remaining_weeks(state.today)
+        weeks_left = [w.number for w in rem]
+
+        def _opponent(team, week):
+            o = state.cal.opponents.get(team, {}).get(week)
+            return o if o is not None and o != team else next(x for x in team_ids if x != team)
+
+        def _sync_b():  # Team A or week changed -> Team B becomes Team A's real opponent that week
+            st.session_state.sim_b = _opponent(st.session_state.sim_a, st.session_state.sim_wk)
+
+        if st.session_state.get("sim_wk") not in weeks_left:
+            st.session_state.sim_wk = weeks_left[0]
+        if st.session_state.get("sim_a") not in team_ids or st.session_state.get("sim_for") != ME:
+            st.session_state.sim_a = ME          # follow "Your team" when it changes
+            st.session_state.sim_for = ME
+            _sync_b()
+        if st.session_state.get("sim_b") not in team_ids or st.session_state.sim_b == st.session_state.sim_a:
+            _sync_b()
+
         c1, c2, c3, c4 = st.columns([3, 3, 2, 2])
-        ta = c1.selectbox("Team A", team_ids, index=team_ids.index(ME), format_func=team_label.get, key="sim_a")
-        wk_n = c3.selectbox("Week", [w.number for w in rem], key="sim_wk")
-        opp_default = state.cal.opponents[ta].get(wk_n)
-        others = [t for t in team_ids if t != ta]
-        tb = c2.selectbox("Team B", others, index=others.index(opp_default) if opp_default in others else 0,
-                          format_func=team_label.get, key="sim_b")
+        ta = c1.selectbox("Team A", team_ids, format_func=team_label.get, key="sim_a", on_change=_sync_b,
+                          help="Any team in the league. Team B switches to Team A's opponent that week.")
+        wk_n = c3.selectbox("Week", weeks_left, key="sim_wk", on_change=_sync_b)
+        tb = c2.selectbox("Team B", [x for x in team_ids if x != ta], format_func=team_label.get, key="sim_b",
+                          help="Defaults to Team A's scheduled opponent; pick any other team for a what-if.")
         n_sims = c4.select_slider("Simulations", [1000, 5000, 10000, 25000], value=10000)
         if st.button("Run simulation", type="primary"):
             world, coaches_now = get_world(pretend or date.today().isoformat(), SH["nonce"])

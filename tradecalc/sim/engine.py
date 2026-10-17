@@ -345,9 +345,11 @@ def fantasy_week(sims: GameSims, rosters: dict[str, list[str]], days: list[date]
                          "nba_team": (teams_of or {}).get(k, ""), "games": len(gs), "p_active": act_rate,
                          "exp_starts": float(starts[k].mean()) if gs else 0.0, "fp_per_game": fpg,
                          "exp_fp_to_team": float(contrib[k].mean()) if gs else 0.0})
-    a, b = list(rosters)
-    ta, tb = totals[a], totals[b]
-    return MatchupResult(float((ta > tb).mean()), float((ta == tb).mean()), totals, pd.DataFrame(rows))
+    labels = list(rosters)
+    if len(labels) == 2:  # head-to-head: P(first team wins), P(tie)
+        ta, tb = totals[labels[0]], totals[labels[1]]
+        return MatchupResult(float((ta > tb).mean()), float((ta == tb).mean()), totals, pd.DataFrame(rows))
+    return MatchupResult(float("nan"), float("nan"), totals, pd.DataFrame(rows))
 
 
 # --- live world (current season, ESPN rosters / depth charts / injuries) -------------------

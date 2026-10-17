@@ -139,3 +139,30 @@ def test_explanation_summary_bullets_and_weekly_change(week_dates):
     e2 = explain(r2, st)
     if r2.verdict == "DECLINE":
         assert e2.signs[0] == -1
+
+
+def test_league_forecast_probabilities_and_last_place(week_dates):
+    from tradecalc.trade.standings import forecast, last_place_line
+
+    st = _two_team_state(week_dates)
+    for i in st.rosters[2]:  # make team 2 much stronger
+        st.players[i].mu += 15
+    fc = forecast(st, n=4000, seed=1)
+    assert list(fc["team_id"]) == [2, 1]
+    assert fc["p_first"].sum() == pytest.approx(1.0) and fc["p_last"].sum() == pytest.approx(1.0)
+    assert fc["exp_wins"].sum() == pytest.approx(1.0)          # one week, one matchup
+    assert last_place_line(fc) == "Team1 will be eating poop"
+
+
+def test_league_forecast_counts_finished_weeks(week_dates):
+    from datetime import timedelta
+
+    from tradecalc.trade.standings import forecast
+
+    st = _two_team_state(week_dates)
+    st.league.matchups = [{"week": 1, "home": 1, "away": 2, "winner": "HOME", "home_total": 900.0, "away_total": 800.0,
+                           "home_points": {}, "away_points": {}}]
+    st.today = week_dates[-1] + timedelta(days=1)                # week 1 is over
+    fc = forecast(st, n=100, seed=1)
+    r1 = fc.set_index("team_id").loc[1]
+    assert r1["record"] == "1-0" and r1["p_first"] == 1.0

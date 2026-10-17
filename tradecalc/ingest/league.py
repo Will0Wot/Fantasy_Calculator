@@ -191,7 +191,9 @@ def load_league(client: EspnClient, force=False) -> LeagueData:
     # points_by_period: fantasy points each team has scored per day (scoring period) so far
     matchups = [
         {"week": m["matchupPeriodId"], "home": m["home"]["teamId"], "away": m.get("away", {}).get("teamId"),
-         "home_points": _pts(m["home"]), "away_points": _pts(m.get("away") or {})}
+         "home_points": _pts(m["home"]), "away_points": _pts(m.get("away") or {}),
+         "winner": m.get("winner", "UNDECIDED"),
+         "home_total": float(m["home"].get("totalPoints") or 0), "away_total": float((m.get("away") or {}).get("totalPoints") or 0)}
         for m in raw.get("schedule", [])
     ]
 
