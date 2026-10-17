@@ -331,6 +331,28 @@ def standings(
     typer.secho(f"💩 {last_place_line(fc)}", bold=True)
 
 
+@app.command("forecast-test")
+def forecast_test_cmd(leagues: int = typer.Option(12, help="Mock leagues for the validation season.")):
+    """Backtest the league forecast on mock leagues from last season (tune on the season before)."""
+    from tradecalc.sim import forecast_test as FT
+    from tradecalc.sim.history import prev_season
+    from tradecalc.sim.live import coaches_table, history
+
+    st = _state()
+    cfg, conn = _ctx()
+    test = prev_season(cfg["league"]["nba_season"])
+    y = int(test[:4]) + 1
+    H = history(conn, cfg, st.league)
+    coaches = coaches_table(conn, st.league.pro_teams, [y - 2, y - 1, y])
+    rep = FT.full_backtest(H, conn, _client(cfg, conn), coaches, test, y, n_leagues=leagues, log=typer.echo)
+    import pandas as pd
+
+    for lab in ("before", "after"):
+        typer.secho(f"\n{lab}", bold=True)
+        typer.echo(pd.DataFrame(rep[f"metrics_{lab}"]).set_index("checkpoint").round(3).T.to_string())
+    typer.echo(f"\nSaved {FT.report_path()} (shown in the app's Forecast tests tab).")
+
+
 @app.command("sim-fit")
 def sim_fit():
     """Fit the projection engine (rates, usage, minutes, rest, coaches, noise) on recent seasons."""

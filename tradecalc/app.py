@@ -13,6 +13,7 @@ from pathlib import Path
 # Streamlit Cloud runs this file directly; make the `tradecalc` package importable.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
@@ -114,9 +115,9 @@ st.info(f"📅 {state.week_status()}"
 
 # --- tabs --------------------------------------------------------------------------------
 
-tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_help = st.tabs(
+tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_test, tab_help = st.tabs(
     ["📅 Matchup", "🏆 League forecast", "🎲 Simulate", "🔁 Trade builder", "🔎 Trade finder", "📊 Players",
-     "🩹 Injuries", "❓ Help & accuracy"])
+     "🩹 Injuries", "🧪 Forecast tests", "❓ Help & accuracy"])
 
 from tradecalc import help_text as H  # noqa: E402
 
@@ -642,6 +643,151 @@ with tab_inj:
             hi_new.dropna(how="all").to_csv(hi_path, index=False)
             SH["nonce"] += 1
             st.rerun()
+
+# ---------------------------------------------------------------------------- Forecast tests
+with tab_test:
+    import altair as alt
+
+    from tradecalc.sim.forecast_test import load_report
+
+    rep = load_report()
+    st.markdown("### Does the league forecast work? Tested on a real past season")
+    if not rep:
+        st.info("No test results yet. Run `tradecalc forecast-test` to create them.")
+    else:
+        st.markdown(f"""
+Your league has no history yet, so the forecast was tested on **{rep['n_leagues']} mock 12-team leagues built from
+the real {rep['test_season']} NBA season**. Each league was snake-drafted from ESPN's *preseason* projections,
+with your league's scoring and lineups. The **actual** final standings come from what those exact rosters really
+scored, using real box scores and each manager starting his best available players every day.
+
+The forecast was then made at four points in the season (**preseason** and after weeks **6, 12 and 18**) using
+**only information available on that date**, and compared with how each league actually finished. The engine was
+fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_season']} is a fair, unseen test.
+""")
+        mb, ma = pd.DataFrame(rep["metrics_before"]), pd.DataFrame(rep["metrics_after"])
+        st.markdown("#### The headline")
+        c = st.columns(4)
+        for col, (_, b_), (_, a_) in zip(c, mb.iterrows(), ma.iterrows()):
+            col.metric(a_["checkpoint"].capitalize(), f"{a_['in_80pct_range']:.0%}",
+                       f"{(a_['in_80pct_range'] - b_['in_80pct_range']) * 100:+.0f} pts vs before",
+                       help="Share of teams whose actual wins landed inside the forecast's 80% range (target 80%).")
+        st.caption("**Teams whose real win total landed inside the forecast's 80% range.** An honest forecast hits "
+                   "about 80%. The first version (\"before\") was badly overconfident; the current one (\"after\") "
+                   "adds season-long luck (injury spells, players having a good or bad year).")
+
+        cov = pd.concat([mb.assign(Version="Before"), ma.assign(Version="After (current)")])
+        order = list(ma["checkpoint"])
+        base = alt.Chart(cov).encode(x=alt.X("checkpoint:N", sort=order, title=None))
+        bars = base.mark_bar().encode(
+            xOffset="Version:N", y=alt.Y("in_80pct_range:Q", title="Inside 80% range", axis=alt.Axis(format="%"),
+                                         scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color("Version:N", scale=alt.Scale(domain=["Before", "After (current)"],
+                                                         range=["#94a3b8", "#3b82f6"]), legend=alt.Legend(orient="top")),
+            tooltip=["Version", "checkpoint", alt.Tooltip("in_80pct_range:Q", format=".0%")])
+        rule = alt.Chart(pd.DataFrame({"y": [0.8]})).mark_rule(strokeDash=[6, 4], color="#16a34a").encode(y="y:Q")
+        st.altair_chart((bars + rule).properties(height=260), use_container_width=True)
+
+        st.markdown("#### Scorecard")
+        pretty = pd.DataFrame({
+            "When": ma["checkpoint"],
+            "Order accuracy (rank corr.)": ma["rank_corr"], "Naive baseline": ma["rank_corr_naive"],
+            "Avg miss in wins": ma["wins_MAE"], "Before": mb["wins_MAE"],
+            "Inside 80% range": ma["in_80pct_range"], "Before ": mb["in_80pct_range"],
+            "Champion odds error": ma["brier_champion"], "Coin flip": ma["brier_coinflip"],
+            "Champion in predicted top 3": ma["champ_in_pred_top3"],
+        })
+        st.dataframe(pretty.style.format({
+            "Order accuracy (rank corr.)": "{:.2f}", "Naive baseline": "{:.2f}", "Avg miss in wins": "{:.1f}",
+            "Before": "{:.1f}", "Inside 80% range": "{:.0%}", "Before ": "{:.0%}", "Champion odds error": "{:.3f}",
+            "Coin flip": "{:.3f}", "Champion in predicted top 3": "{:.0%}"}), hide_index=True, use_container_width=True)
+        st.caption("Order accuracy: 1 = perfect order, 0 = no better than random. Naive baseline = add up each team's "
+                   "preseason projections (plus wins so far, in-season). Champion odds error is a Brier score: lower "
+                   "is better, and a 1-in-12 guess for every team scores the coin-flip value.")
+
+        st.markdown("#### Projected vs actual wins")
+        rows = pd.DataFrame(rep["rows_after"])
+        rows_b = pd.DataFrame(rep["rows_before"])
+        cp_labels = {0: "preseason", 6: "after week 6", 12: "after week 12", 18: "after week 18"}
+        c1, c2 = st.columns([2, 2])
+        cp = c1.select_slider("Forecast made", options=sorted(rows.checkpoint.unique()), value=0,
+                              format_func=lambda v: cp_labels.get(v, v), key="ft_cp")
+        ver = c2.radio("Version", ["After (current)", "Before"], horizontal=True, key="ft_ver")
+        dv = (rows if ver.startswith("After") else rows_b)
+        dv = dv[dv.checkpoint == cp].copy()
+        dv["inside"] = (dv.actual_wins >= dv.p10) & (dv.actual_wins <= dv.p90)
+        dv["Result"] = dv["inside"].map({True: "inside 80% range", False: "outside"})
+        lim = [0, 24]
+        pts = alt.Chart(dv).mark_circle(size=60, opacity=0.8).encode(
+            x=alt.X("exp_wins:Q", title="Projected wins", scale=alt.Scale(domain=lim)),
+            y=alt.Y("actual_wins:Q", title="Actual wins", scale=alt.Scale(domain=lim)),
+            color=alt.Color("Result:N", scale=alt.Scale(domain=["inside 80% range", "outside"],
+                                                        range=["#3b82f6", "#ef4444"]), legend=alt.Legend(orient="top")),
+            tooltip=["league", "team", alt.Tooltip("exp_wins:Q", format=".1f"), "p10", "p90", "actual_wins"])
+        bars_ = alt.Chart(dv).mark_rule(opacity=0.25).encode(x="exp_wins:Q", y="p10:Q", y2="p90:Q",
+                                                             color=alt.Color("Result:N", legend=None))
+        diag = alt.Chart(pd.DataFrame({"x": lim, "y": lim})).mark_line(strokeDash=[4, 4], color="#64748b").encode(x="x", y="y")
+        st.altair_chart((bars_ + pts + diag).properties(height=380), use_container_width=True)
+        st.caption(f"Each dot is one team in one mock league ({len(dv)} teams). Vertical lines are the forecast's 80% "
+                   f"range; dots on the dashed line were predicted exactly. "
+                   f"{dv.inside.mean():.0%} inside the range at this point.")
+
+        st.markdown("#### Are the champion odds honest?")
+        ch = rows.copy()
+        ch["is_champ"] = (ch.actual_rank == 1).astype(float)
+        ch["bucket"] = pd.cut(ch.p_first, [-0.001, 0.05, 0.15, 0.3, 0.5, 1.0],
+                              labels=["0–5%", "5–15%", "15–30%", "30–50%", "50–100%"])
+        cal = ch.groupby("bucket", observed=True).agg(teams=("is_champ", "size"), predicted=("p_first", "mean"),
+                                                       actual=("is_champ", "mean")).reset_index()
+        st.dataframe(cal.rename(columns={"bucket": "Forecast said 'wins the league'", "teams": "Teams",
+                                         "predicted": "Average forecast", "actual": "Actually won"})
+                     .style.format({"Average forecast": "{:.0%}", "Actually won": "{:.0%}"}),
+                     hide_index=True, use_container_width=True)
+        st.caption("All checkpoints together. Honest odds: teams given ~30% should win about 30% of the time. "
+                   "Small groups bounce around, so read the trend rather than single rows.")
+
+        st.markdown("#### Look inside one mock league")
+        c1, c2 = st.columns(2)
+        lg = c1.selectbox("League", sorted(rows.league.unique()), format_func=lambda i: f"Mock league {i + 1}", key="ft_lg")
+        cp2 = c2.select_slider("Forecast made", options=sorted(rows.checkpoint.unique()), value=0,
+                               format_func=lambda v: cp_labels.get(v, v), key="ft_cp2")
+        one = rows[(rows.league == lg) & (rows.checkpoint == cp2)].sort_values("avg_rank").copy()
+        one["Predicted rank"] = range(1, len(one) + 1)
+        one["Inside range"] = np.where((one.actual_wins >= one.p10) & (one.actual_wins <= one.p90), "✓", "✗")
+        tbl = pd.DataFrame({"Predicted rank": one["Predicted rank"], "Team": [f"Team {t + 1}" for t in one.team],
+                            "Projected wins": one.exp_wins, "80% range": [f"{a:.0f}–{b:.0f}" for a, b in zip(one.p10, one.p90)],
+                            "Win league": one.p_first, "Actual wins": one.actual_wins, "Actual rank": one.actual_rank,
+                            "Inside range": one["Inside range"]})
+        st.dataframe(tbl.style.format({"Projected wins": "{:.1f}", "Win league": "{:.0%}", "Actual wins": "{:.0f}"}),
+                     hide_index=True, use_container_width=True)
+        with st.expander("Rosters in this mock league"):
+            ros = rep["leagues"][lg]
+            st.dataframe(pd.DataFrame({f"Team {i + 1}": r for i, r in enumerate(ros)}), hide_index=True,
+                         use_container_width=True)
+
+        with st.expander("How the season-luck setting was tuned (on the season before)"):
+            tu = pd.DataFrame([{"Season form setting": r["talent_sd"],
+                                **{f"Inside 80% · {c}": v for c, v in zip(r["checkpoints"], r["coverage"])}}
+                               for r in rep["tuning"]])
+            st.dataframe(tu.style.format({c: "{:.0%}" for c in tu.columns if c.startswith("Inside")}),
+                         hide_index=True, use_container_width=True)
+            st.caption(f"Each setting was tried on mock leagues from {rep['fit_seasons'][1]}; the one closest to 80% "
+                       f"overall ({rep.get('chosen_talent_sd')}) is used, then checked on {rep['test_season']} above.")
+
+        st.markdown(f"""
+#### What this shows
+- **The ranges are honest now.** About 72–82% of teams finish inside the forecast's 80% range at every point in
+  the season, up from 38–65% before the season-luck fix.
+- **The order gets good fast.** By week 6 the forecast orders teams far better than adding up projections, and by
+  week 18 it's very accurate (rank correlation ~0.9; the actual champion is in its top 3 in 9 of 10 leagues).
+- **Preseason is mostly a coin flip, and the forecast says so.** With balanced drafts, October standings depend on
+  injuries and breakouts nobody knows yet. Champion odds preseason are about as good as an even guess; treat
+  early-season favorites as "slightly ahead", not "likely".
+
+*Tested {rep['run_on']} · {rep['n_leagues']} leagues · {rep['n_sims']} simulated seasons per forecast · re-run with
+`tradecalc forecast-test`. Limits: mock leagues, not your league; managers never trade or pick up free agents in the
+test; lineups use a simple position rule.*
+""")
 
 # ---------------------------------------------------------------------------- Help & accuracy
 with tab_help:

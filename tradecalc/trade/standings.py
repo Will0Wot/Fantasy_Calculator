@@ -38,16 +38,28 @@ def _finished_results(state) -> tuple[dict, dict, dict, dict]:
     return w, l, t, pts
 
 
-def _weekly_scores_quick(state, week, rng, n) -> dict[int, np.ndarray]:
+def _weekly_scores_quick(state, week, rng, n, team_form: dict | None = None) -> dict[int, np.ndarray]:
     out = {}
     for tid, roster in state.rosters.items():
         d = week_dist(roster, week, state, state.today)
         bank = state.banked(tid, week)[0] if hasattr(state, "banked") else 0.0
-        out[tid] = rng.normal(d.M, np.sqrt(max(d.V, 1e-9)), n) + bank
+        f = team_form[tid] if team_form else 1.0
+        out[tid] = rng.normal(d.M, np.sqrt(max(d.V, 1e-9)), n) * f + bank
     return out
 
 
-def _weekly_scores_engine(state, week, world, coaches_now, n, seed) -> dict[int, np.ndarray]:
+def _team_form(state, n, rng) -> dict:
+    """Quick method's version of the season layer: one persistent form multiplier per team per
+    simulated season (player form averaged over ~10 starters), shrinking as games are played."""
+    from tradecalc.sim.engine import SEASON_LAYER
+
+    played = [p.n for t in state.rosters for p in (state.players[i] for i in state.rosters[t])]
+    gp = float(np.mean(played)) if played else 0.0
+    sd = SEASON_LAYER["talent_sd"] * np.sqrt(SEASON_LAYER["talent_k"] / (SEASON_LAYER["talent_k"] + gp)) / np.sqrt(10)
+    return {t: np.exp(rng.normal(0, sd, n) - sd ** 2 / 2) for t in state.rosters}
+
+
+def _weekly_scores_engine(state, week, world, coaches_now, n, seed, layer=None, week_index: int = 0) -> dict[int, np.ndarray]:
     from tradecalc.model.names import norm_name
     from tradecalc.sim.engine import fantasy_week, live_avail, simulate_games
     from tradecalc.teams import to_nba
@@ -68,7 +80,13 @@ def _weekly_scores_engine(state, week, world, coaches_now, n, seed) -> dict[int,
                 if k not in world.rotation.get(tm, []):
                     world.rotation.setdefault(tm, []).append(k)
         rosters[tid] = keys
-    sims = simulate_games(world, games, live_avail(world, state, coaches_now), n=n, seed=seed, interest=set(elig))
+    avail = live_avail(world, state, coaches_now)
+    if layer is not None:  # outside long absences a player is available a bit more often
+        base_avail = avail
+        avail = lambda k, t, d: min(base_avail(k, t, d) * layer.short_scale, 0.99)  # noqa: E731
+    sims = simulate_games(world, games, avail, n=n, seed=seed, interest=set(elig))
+    if layer is not None:
+        layer.apply(sims, week_index)
     res = fantasy_week(sims, rosters, days, slot_list(cfg), elig, cfg["roster"]["slot_eligibility"], n)
     return {tid: res.totals[tid] + (state.banked(tid, week)[0] if hasattr(state, "banked") else 0.0)
             for tid in state.rosters}
@@ -85,11 +103,24 @@ def forecast(state, n: int = 10000, seed: int | None = 0, method: str = "quick",
     wins = np.tile(np.array([w0[t] + tie * t0[t] for t in teams]), (n, 1))
     points = np.tile(np.array([p0[t] for t in teams]), (n, 1))
     remaining = [wk for wk in state.cal.weeks if wk.end >= state.today]
+    # Season layer: luck that persists all season (form, multi-week injuries); backtested in
+    # sim/forecast_test.py. Without it, season ranges were far too narrow.
+    layer, team_form = None, None
+    if method == "detailed":
+        from tradecalc.model.names import norm_name
+        from tradecalc.sim.engine import SeasonLayer
+
+        keys = sorted({norm_name(state.players[i].name) for t in state.rosters for i in state.rosters[t]})
+        gp = {norm_name(p.name): p.n for p in state.players.values()}
+        layer = SeasonLayer(keys, len(remaining), n, rng, gp)
+    else:
+        team_form = _team_form(state, n, rng)
     for j, wk in enumerate(remaining):
         if method == "detailed":
-            scores = _weekly_scores_engine(state, wk, world, coaches_now, n, None if seed is None else seed + wk.number)
+            scores = _weekly_scores_engine(state, wk, world, coaches_now, n, None if seed is None else seed + wk.number,
+                                           layer, j)
         else:
-            scores = _weekly_scores_quick(state, wk, rng, n)
+            scores = _weekly_scores_quick(state, wk, rng, n, team_form)
         for t in teams:
             points[:, idx[t]] += scores[t]
         seen = set()

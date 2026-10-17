@@ -599,3 +599,51 @@ def minutes_projection(world: World) -> pd.DataFrame:
         rows.append({"key": k, "minutes": float(r["exp_min"]), "fppg_min": fp, "depth": depth,
                      "role": role_of(float(r["exp_min"]), depth)})
     return pd.DataFrame(rows).set_index("key")
+
+
+# --- season layer: luck that persists across weeks (season forecasts) ------------------------
+
+SEASON_LAYER = {
+    # measured on 2023-24 .. 2025-26 box scores (rotation players): ~18% of games lost to
+    # absences of 5+ games, ~1.2 such absences a season, mean length ~12 games (~3.5 weeks)
+    "long_share": 0.175,
+    "spell_weeks": 3.5,
+    # season-long form: lognormal sd, shrinking with games already played (fitted in
+    # sim/forecast_test.py on 2024-25 mock leagues)
+    "talent_sd": 0.30,
+    "talent_k": 20,
+}
+
+
+class SeasonLayer:
+    """Per simulated season: a form multiplier per player and a weekly in/out state from a
+    two-state injury process (healthy <-> long absence)."""
+
+    def __init__(self, keys: list[str], n_weeks: int, n: int, rng, games_played: dict | None = None,
+                 cfg: dict | None = None):
+        c = dict(SEASON_LAYER, **(cfg or {}))
+        self.idx = {k: i for i, k in enumerate(keys)}
+        K = len(keys)
+        gp = np.array([(games_played or {}).get(k, 0) for k in keys], dtype=float)
+        sd = c["talent_sd"] * np.sqrt(c["talent_k"] / (c["talent_k"] + gp))
+        self.talent = np.exp(rng.normal(0, 1, (n, K)) * sd[None, :] - sd[None, :] ** 2 / 2)
+        pi, L = c["long_share"], c["spell_weeks"]
+        stay = 1 - 1 / L
+        start = pi * (1 - stay) / (1 - pi)
+        self.on = np.ones((n, n_weeks, K), dtype=bool)
+        out = rng.random((n, K)) < pi * 0          # everyone starts healthy (known injuries are in availability)
+        for w in range(n_weeks):
+            u = rng.random((n, K))
+            out = np.where(out, u < stay, u < start)
+            self.on[:, w, :] = ~out
+        self.short_scale = 1 / (1 - pi)          # per-game availability outside long absences
+
+    def apply(self, sims: "GameSims", week_index: int):
+        """Scale a week's simulated fantasy points by form and remove games inside absences."""
+        for (k, d), fp in sims.fp.items():
+            i = self.idx.get(k)
+            if i is None:
+                continue
+            on = self.on[:, week_index, i]
+            sims.fp[(k, d)] = fp * self.talent[:, i] * on
+            sims.played[(k, d)] = sims.played[(k, d)] & on

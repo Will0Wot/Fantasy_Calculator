@@ -54,7 +54,10 @@ projected number of wins.
    - *Quick:* each team's score is drawn from its projected weekly total and normal week-to-week swing.
 3. **Every scheduled matchup is decided** (a tie counts as half a win), and wins are added up.
 4. **There are no playoffs,** so the team with the most wins takes the league. Ties are broken by total points.
-5. **Repeat** 2,000 (detailed) or 10,000 (quick) times and count how often each team finishes where.
+5. **Season-long luck:** in each simulated season a player can have a good or bad year, and can miss a multi-week
+   stretch. Both were measured from real box scores, and the size of the "good or bad year" effect was tuned so
+   the forecast's ranges proved honest on past seasons (see **Forecast tests**).
+6. **Repeat** 2,000 (detailed) or 10,000 (quick) times and count how often each team finishes where.
 
 **Reading it:** "Win league 35%" means that team finished first in 35% of simulated seasons. The heatmap shows
 the full spread of where each team ends up. Early in the season the ranges are wide; they tighten as weeks are
@@ -307,11 +310,16 @@ as "clearly behind / ahead, but very winnable / losable."
     else:
         parts.append("*Validation results haven't been saved yet. Run `tradecalc sim-validate` to measure them.*")
     parts.append(f"""
-**4. The season model was tuned the same way.** How fast real results override preseason expectations ({k} games)
+**4. The league forecast was tested on whole seasons.** Mock 12-team leagues from the real 2025-26 season were
+forecast at preseason and after weeks 6, 12 and 18, and compared with how they actually finished. This
+uncovered (and fixed) overconfidence: season-long luck (multi-week injuries, players having a good or bad year)
+was missing. Now about 72–82% of teams finish inside the "80%" range. See the **🧪 Forecast tests** tab.
+
+**5. The season model was tuned the same way.** How fast real results override preseason expectations ({k} games)
 was chosen by testing several settings on last season, and picking the one that best predicted each player's
 remaining-season scoring.
 
-**5. Every behavior comes from data, not guesses:**
+**6. Every behavior comes from data, not guesses:**
 - **Back-to-backs:** healthy players sit about 9% of second nights vs 5% otherwise, and about 17% for players
   over 34.
 - **Teammates out:** when 20% of a team's shots are missing, each remaining player shoots about 7% more.
