@@ -149,10 +149,10 @@ st.info(f"📅 {state.week_status()}"
 
 # --- tabs --------------------------------------------------------------------------------
 
-(tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_test, tab_audit, tab_method,
- tab_help) = st.tabs(
+(tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_track, tab_test, tab_audit,
+ tab_method, tab_help) = st.tabs(
     ["📅 Matchup", "🏆 League forecast", "🎲 Simulate", "🔁 Trade builder", "🔎 Trade finder", "📊 Players",
-     "🩹 Injuries", "🧪 Forecast tests", "🔬 Model audit", "📐 Methodology", "❓ Help & accuracy"])
+     "🩹 Injuries", "📈 Season tracker", "🧪 Forecast tests", "🔬 Model audit", "📐 Methodology", "❓ Help & accuracy"])
 
 from tradecalc import help_text as H  # noqa: E402
 
@@ -837,6 +837,13 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
 `tradecalc forecast-test`. Limits: mock leagues, not your league; managers never trade or pick up free agents in the
 test; lineups use a simple position rule.*
 """)
+
+# ---------------------------------------------------------------------------- Season tracker
+with tab_track:
+    from tradecalc import tracking_page
+
+    st.header("Season tracker: prediction vs actual")
+    tracking_page.render(st, cfg["league"]["nba_season"])
 
 # ---------------------------------------------------------------------------- Model audit
 DOCS = Path(__file__).resolve().parent.parent / "docs"

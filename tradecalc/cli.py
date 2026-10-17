@@ -388,6 +388,28 @@ def audit(quick: bool = typer.Option(False, help="Fewer mock leagues and matchup
                        f"(league.yaml model.matchup_shrink is {cfg['model']['matchup_shrink']})")
 
 
+@app.command()
+def track(excel: str = typer.Option(None, help="Also write the Excel workbook to this path."),
+          today: str = typer.Option(None, help="Pretend today is YYYY-MM-DD.")):
+    """Season tracker: record the model's predictions now (before games are played) and fill in
+    real results for finished weeks. Writes tracking/<season>/*.csv; run it daily."""
+    from pathlib import Path as _P
+
+    from tradecalc import tracking
+
+    st = _state(today=today)
+    cfg, conn = _ctx()
+    season = cfg["league"]["nba_season"]
+    tables = tracking.run(st, conn, season, log=typer.echo)
+    typer.echo(f"Saved {tracking.season_dir(season)}")
+    sm = tracking.summary(tables)
+    if len(sm):
+        typer.echo(sm.to_string(index=False))
+    if excel:
+        _P(excel).write_bytes(tracking.excel(tables))
+        typer.echo(f"Wrote {excel}")
+
+
 @app.command("injury-reports")
 def injury_reports_cmd(season: list[str] = typer.Option(["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"],
                                                         "--season", help="Seasons to collect (repeatable).")):

@@ -1,0 +1,13 @@
+week,week_start,week_end,kind,as_of,team_id,team,opp_id,opp,proj_points,proj_sd,banked_points,win_prob,model,actual_points,opp_actual_points,won
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,1,Wills men,4,Where my hug at fc,991.4943,143.2455,0.0000,0.4221,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,2,Luca's Loud Team,3,Ball Knowers,1153.2460,170.4648,0.0000,0.8004,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,3,Ball Knowers,2,Luca's Loud Team,907.5783,134.4673,0.0000,0.1996,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,4,Where my hug at fc,1,Wills men,1046.7866,153.0733,0.0000,0.5779,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,5,Jordan's Scary Team,7,Bagchasers Anonymous,840.7220,140.5591,0.0000,0.1926,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,6,All About D,9,Outsyed All Stars,902.3321,143.9118,0.0000,0.4158,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,7,Bagchasers Anonymous,5,Jordan's Scary Team,1087.4903,158.3796,0.0000,0.8074,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,8,Dennis Rodman North Koreans,10,ParshyNextDoor,1027.7555,151.1444,0.0000,0.5912,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,9,Outsyed All Stars,6,All About D,962.1879,152.6568,0.0000,0.5842,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,10,ParshyNextDoor,8,Dennis Rodman North Koreans,960.1424,157.5117,0.0000,0.4088,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,11,Sengooners,12,I didn't hear no bell,919.8568,134.9062,0.0000,0.4594,8aa4a13,,,
+1,2026-10-20,2026-10-25,pre-week,2026-10-17,12,I didn't hear no bell,11,Sengooners,948.0299,155.2695,0.0000,0.5406,8aa4a13,,,

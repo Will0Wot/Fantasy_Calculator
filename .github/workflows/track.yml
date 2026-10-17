@@ -1,0 +1,54 @@
+# Season tracker: every morning, record the model's predictions before the day's games and fill in
+# results for finished weeks (tracking/<season>/*.csv), then commit them so the app's
+# "Season tracker" tab and the Excel download stay up to date. See tradecalc/tracking.py.
+name: Season tracker
+
+on:
+  schedule:
+    - cron: "17 13 * * *"     # 13:17 UTC = 9:17 AM Eastern (8:17 in winter), before any tip-off
+  workflow_dispatch:           # "Run workflow" button in the Actions tab
+  push:
+    branches: [main]
+    paths: [".github/workflows/track.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: season-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Restore data cache (box scores already downloaded)
+        uses: actions/cache@v4
+        with:
+          path: tradecalc/data/cache.sqlite
+          key: tradecalc-data-${{ github.run_id }}
+          restore-keys: tradecalc-data-
+
+      - name: Record predictions and results
+        run: python -m tradecalc.cli track
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tracking/
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Season tracker: predictions and results $(date -u +%F)"
+          git pull --rebase origin main
+          git push origin HEAD:main
