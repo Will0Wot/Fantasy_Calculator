@@ -252,7 +252,12 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
         if acal:
             ng = int(cur_apps.get(key, 0))
             tg = team_played.get(p.pro_team, 0)
-            gp_rate = calibrated_rate(gp_by_name.get(key), ng, tg, acal)
+            mins = None                                  # expected minutes: engine projection, else ESPN's
+            if minutes_proj is not None and key in minutes_proj.index:
+                mins = float(minutes_proj.loc[[key], "minutes"].iloc[0])
+            elif (p.projection or {}).get("MIN"):
+                mins = float(p.projection["MIN"])
+            gp_rate = calibrated_rate(gp_by_name.get(key), ng, tg, acal, mins)
         else:
             gp_rate = gp_by_name.get(key)
         av = availability(status, gp_rate, cap=m["availability_cap"], dtd_prob=m["dtd_availability"],

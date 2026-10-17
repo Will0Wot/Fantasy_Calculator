@@ -120,7 +120,9 @@ def test_availability(H, params, season) -> dict:
 
     acal = load_config()["model"].get("availability_calibration")
     C["p_naive"] = rate
-    cal_rate = (acal["in_intercept"] + acal["in_slope"] * rate) if acal else rate
+    from tradecalc.model.availability import in_season_calibration
+
+    cal_rate = [in_season_calibration(r, acal, m) for r, m in zip(rate, C.exp_min)] if acal else rate
     C["p_model"] = [float(np.clip(r * rest_factor(params, a if a == a else 26, m if m == m else 20, b), 0, 1))
                     for r, a, m, b in zip(cal_rate, C.age, C.exp_min, C.b2b)]
     C["p_raw_rest"] = [float(np.clip(r * rest_factor(params, a if a == a else 26, m if m == m else 20, b), 0, 1))

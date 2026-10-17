@@ -31,6 +31,8 @@ re-created with `tradecalc audit --baseline`.*
     - The preseason world dropped players who were injured on opening night.
     - The free-agent pool peeked at who plays later in the season.
   - A plotting bug in the trade-test summary.
+  - After the first push of this audit, a TypeError on the live site: Streamlit Cloud kept the old
+    modules in memory (§6.7). Fixed so future pushes reload cleanly.
 
 ## 2. How it was tested
 
@@ -177,6 +179,15 @@ In `build_state`, `team_played` was a dict of team games played and was then rea
 inside the player loop. With the availability calibration on, the second player would have crashed
 the app. Renamed.
 
+### 6.7 Deploy bug: TypeError after a push
+
+Streamlit Cloud pulls a new commit and re-runs `app.py`, but keeps the `tradecalc` modules it had
+already imported. After this audit was pushed, the new `app.py` passed the matchup shrink to the old
+four-argument `p_win` and the Matchup tab crashed with a TypeError. The app now fingerprints its source
+and config files on every run; when they change, it drops the stale `tradecalc` modules and clears the
+caches, so a push takes effect without a manual reboot. Verified headless: unchanged code keeps
+the loaded modules, and a changed file reloads them.
+
 ## 7. Tried and rejected
 
 | Idea | Result | Decision |
@@ -188,6 +199,9 @@ the app. Renamed.
 | Winner's-curse discount on the free agent a 2-for-1 signs | real/predicted for the best free agents: 0.93, 0.99, 1.14 by season: no stable effect | not adopted |
 | 2-for-1 trades are overrated (2022-23: predicted +0.2, real −0.56) | didn't replicate: −0.15, +1.04, +0.41 in the test seasons | sampling noise |
 | Season before last in the rates prior | slightly worse projections | not used |
+| Cap single-game outliers at ref × (1 ± z·cv), z = 1.5–3, around the prior or the running estimate | rest-of-season FPPG error **2–9% worse** in every season 2022-23 to 2025-26: big games are mostly real (a bench player promoted to starter routinely beats twice his projection) | not adopted |
+| Cap only games more than 25 / 35 / 45 points above the running estimate | error changed by at most ±0.1% | not adopted (no effect) |
+| Availability on a logit scale with expected minutes (fitted on 2022-23) | availability Brier better in all 3 seasons (0.134 → 0.133, 0.151 → 0.150, 0.151 → 0.149); simulator low bias shrank (−32/−22/−40 → −31/−7/−34 pts a week) but persists; trade decisions slightly worse (correlation down in all 3 seasons; real gain of the top third of predicted trades 1.36/1.17/1.33 → 1.36/1.12/1.13) | not adopted (code kept, `in_logit` in the config) |
 
 ## 8. What still doesn't work, and suggested next steps
 
@@ -199,11 +213,12 @@ the app. Renamed.
 3. **Preseason rankings.** The simulator (0.51 / 0.19 / 0.06) is close to ESPN's projection ranking
    (0.55 / 0.27 / 0.01) but not clearly better. Early in the season, read the league forecast together
    with ESPN's projections. By week 6 the forecast is clearly better (0.64–0.71 vs 0.54–0.67).
-4. **Simulator team totals run 2–4% low (−22 to −40 points a week).** The linear availability calibration
-   slightly under-predicts the most durable players (top bin 90–91% predicted vs 93–95% actual). *Suggested:*
-   an isotonic or logit-scale calibration, split by minutes.
-5. **One huge game moves a projection a lot.** One 80-point game takes a 20-point player to 28.6. *Suggested:*
-   winsorize single games at about 2.5 s.d. in the live average.
+4. **Simulator team totals run 2–4% low (−22 to −40 points a week).** A better availability calibration
+   (logit + minutes, §7) only partly fixed it and cost trade accuracy, so availability isn't the main cause.
+   *Next to check:* the lineup choice in the simulated week versus the truth's best-available lineup, and the
+   rotation-minutes total.
+5. **One huge game moves a projection a lot** (an 80-point game takes a 20-point player to 28.6). Capping
+   was tested and makes projections worse (§7); the current behaviour is the better one on the data.
 6. **Injury reports aren't backtestable yet.** No historical injury reports exist. The app now records the
    daily report (`status_snapshots`). After this season, the injury model (§3 of the methodology) can be
    tested the same way.

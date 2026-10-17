@@ -78,3 +78,16 @@ def test_norm_name():
     assert norm_name("Nikola Jokić") == norm_name("Nikola Jokic")
     assert norm_name("Jimmy Butler III") == "jimmy butler"
     assert norm_name("Shai Gilgeous-Alexander") == "shai gilgeous alexander"
+
+
+def test_in_season_calibration_forms():
+    from tradecalc.model.availability import calibrated_rate, in_season_calibration
+
+    lin = {"pre_intercept": 0.735, "pre_slope": 0.047, "in_intercept": 0.524, "in_slope": 0.378, "prior_games": 10}
+    assert abs(in_season_calibration(0.8, lin) - (0.524 + 0.378 * 0.8)) < 1e-12
+    assert abs(in_season_calibration(0.8, lin, minutes=10) - in_season_calibration(0.8, lin)) < 1e-12  # linear ignores minutes
+    lg = dict(lin, in_logit=[1.158, 0.362, 0.827])
+    a_lo, a_hi = in_season_calibration(0.5, lg), in_season_calibration(0.95, lg)
+    assert 0 < a_lo < a_hi < 1                                                     # monotone in the rate
+    assert in_season_calibration(0.9, lg, minutes=34) > in_season_calibration(0.9, lg, minutes=14)  # starters play more
+    assert calibrated_rate(0.9, 0, 0, lg) == calibrated_rate(0.9, 0, 0, lin)       # preseason form unchanged

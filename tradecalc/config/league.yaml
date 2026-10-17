@@ -83,7 +83,7 @@ model:
     pre_intercept: 0.735        # preseason: last season's rate barely predicts this season's
     pre_slope: 0.047
     in_intercept: 0.524         # in-season: ~38% of a player's deviation from average carries forward
-    in_slope: 0.378
+    in_slope: 0.378             # (a logit + minutes form, in_logit: [c0, c1, c2], was tested: see docs/model_audit.md)
     prior_games: 10
   matchup_shrink: 0.745         # projected gaps regress toward the middle: probit fit on 2022-23..2025-26 (audit, rolling origin)
   proj_uncertainty: 0.3         # a player's true level is uncertain (shared by his games in a week)

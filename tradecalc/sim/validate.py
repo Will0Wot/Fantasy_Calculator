@@ -104,11 +104,13 @@ def history_avail(H, W, params, asof: str, season: str):
 
     acal = load_config()["model"].get("availability_calibration")
 
+    from tradecalc.model.availability import in_season_calibration
+
     def avail(k, t, d):
         base = min(rate.get((k, t), 0.85), 0.97)
-        if acal:  # same calibration as the live model (raw rates are too extreme)
-            base = acal["in_intercept"] + acal["in_slope"] * base
         row = P.loc[k] if k in P.index else None
+        if acal:  # same calibration as the live model (raw rates are too extreme)
+            base = in_season_calibration(base, acal, row["exp_min"] if row is not None else None)
         b2b = d in W.b2b_days.get(t, set())
         f = rest_factor(params, row["age"] if row is not None else 26, row["exp_min"] if row is not None else 20, b2b)
         return float(np.clip(base * f, 0, 1))

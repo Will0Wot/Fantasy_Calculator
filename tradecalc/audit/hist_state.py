@@ -146,7 +146,7 @@ def player_table(ctx: SeasonCtx, cfg, today: date, rostered: dict) -> pd.DataFra
     m = cfg["model"]
     before = ctx.logs[ctx.logs.d < today]
     stats = before.groupby("key").agg(n=("fp", "size"), live=("fp", "mean"), sd=("fp", "std"), team=("team", "last"),
-                                      last_d=("d", "max"))
+                                      last_d=("d", "max"), mins=("min", "mean"))
     first_team = ctx.logs.groupby("key")["team"].first()
     known = set(stats.index) | set(ctx.proj_fp) | set(rostered)
     team_dates = _team_dates(ctx)
@@ -163,7 +163,8 @@ def player_table(ctx: SeasonCtx, cfg, today: date, rostered: dict) -> pd.DataFra
         rate_prev = float(ctx.prev_rate.get(k, 0.85))
         tp = team_played.get(team, 0)
         if m.get("availability_calibration"):
-            base = min(calibrated_rate(rate_prev, n, tp, m["availability_calibration"]), m["availability_cap"])
+            mins = float(stats.mins[k]) if n else PRESEASON_PROJ.get(k, {}).get("MIN")
+            base = min(calibrated_rate(rate_prev, n, tp, m["availability_calibration"], mins), m["availability_cap"])
         else:
             base = min((10 * rate_prev + n) / (10 + max(tp, n)), m["availability_cap"]) if tp else min(rate_prev, m["availability_cap"])
         base = espn_games_blend(base, ctx.proj_gp.get(k), tp, m["availability_cap"])   # as the live model does

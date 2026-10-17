@@ -250,15 +250,15 @@ def _avail_fn(H, W: World, params, asof: str, season: str, prev: str):
         a = apps.get(k, 0)
         n_team = tg.get(team, 0)
         base_prev = rate_prev.get(k, 0.85)
+        row = W.players.loc[k] if k in W.players.index else None
         if acal:
-            base = calibrated_rate(base_prev, a, n_team, acal)
+            base = calibrated_rate(base_prev, a, n_team, acal, row["exp_min"] if row is not None else None)
         else:
             base = (10 * base_prev + a) / (10 + max(n_team, a)) if n_team else base_prev
         # like the live model: ESPN's projected games played as a second opinion (fades by mid-season)
         from tradecalc.model.availability import espn_games_blend
 
         base = espn_games_blend(base, PRESEASON_PROJ.get(k, {}).get("GP"), n_team)
-        row = W.players.loc[k] if k in W.players.index else None
         f = rest_factor(params, 26 if row is None else (row["age"] if row["age"] == row["age"] else 26),
                         20 if row is None else row["exp_min"], d in W.b2b_days.get(team, set()))
         return float(np.clip(min(base, 0.97) * f, 0, 1))

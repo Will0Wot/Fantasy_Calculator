@@ -50,6 +50,12 @@ and $n_i \ge 5$, use $k/2$ and replace $\bar x_i$ by $\tfrac12(\bar x_i + \bar x
 
 $k$ is chosen by backtest (§5.1): rest-of-season MAE is flat for $k \in [6, 9]$ in all three test seasons.
 
+**Outlier games are not capped.** Winsorizing single games (at $\text{ref}\,(1 \pm z\,\text{cv})$ around the
+prior or the running estimate, $z \in \{1.5, 2, 2.5, 3\}$) raised rest-of-season MAE by 2–9% in every
+season 2022-23 to 2025-26: big games are mostly real signal (a bench player promoted to starter
+routinely beats twice his preseason projection). Capping only games more than 25–45 points above
+the running estimate changed MAE by at most ±0.1%.
+
 ### 1.3 Per-game spread
 
 $$\sigma_i = \frac{k\, \text{cv}\, \mu_i + n_i\, s_i}{k + n_i}, \qquad \text{cv} = 0.42$$
@@ -70,6 +76,14 @@ $G_t$ = team games played this season. Fitted on 2021-22 → 2022-23:
 $(\alpha_0, \beta_0) = (0.735, 0.047)$ (preseason: last season's rate barely predicts this season's
 for fantasy-relevant players), $(\alpha_1, \beta_1) = (0.524, 0.378)$ (in-season: ~38% of a deviation
 from average persists). Capped at 0.95.
+
+*Tested and not adopted:* a logit form with expected minutes $\hat m_i$,
+$\operatorname{logit} a^{(1)}_i = 1.158 + 0.362\operatorname{logit}(\text{rate}) + 0.827(\hat m_i/30 - 1)$
+(`in_logit` in the config). It lowered the held-out availability Brier score in all three test seasons
+(0.134 → 0.133, 0.151 → 0.150, 0.151 → 0.149) and fixed the under-prediction for the most durable
+players, but trade decisions got slightly worse (correlation of predicted with real Δwins down in all
+three seasons; real gain of the top third of predicted trades 1.36 / 1.17 / 1.33 → 1.36 / 1.12 / 1.13),
+and the simulator's low team totals were only partly fixed.
 
 **Injuries** (§3) modify $a_i(d)$: out ⇒ 0 until the return window; the probability of being
 back ramps linearly from 0 at ESPN's return date $R$ to $\text{rtp}$ at $R + w$,

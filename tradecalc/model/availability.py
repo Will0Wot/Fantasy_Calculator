@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
 OUT_STATUSES = {"OUT", "INJURY_RESERVE", "SUSPENSION", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL",
@@ -136,14 +137,30 @@ def availability(
     return Availability(base, modifiers=modifiers)
 
 
-def calibrated_rate(hist_rate: float | None, apps: int, team_games: int, cal: dict) -> float:
+def in_season_calibration(rate: float, cal: dict, minutes: float | None = None) -> float:
+    """Probability of playing, from this season's (shrunk) games-played rate and expected minutes.
+
+    logit(a) = c0 + c1 * logit(rate) + c2 * (minutes / 30 - 1), fitted on 2022-23 rotation
+    player-games (model audit). Raw rates are far too extreme (c1 ~ 0.36), and at the same rate a
+    starter plays more often than a bench player (c2 > 0: rest days and DNPs hit bench roles).
+    Unknown minutes use the typical rotation value (`default_minutes`)."""
+    if "in_logit" not in cal:                      # older linear form
+        return cal["in_intercept"] + cal["in_slope"] * rate
+    c0, c1, c2 = cal["in_logit"]
+    m = minutes if minutes is not None and minutes == minutes and minutes > 0 else cal.get("default_minutes", 25.0)
+    r = min(max(float(rate), 1e-3), 0.97)
+    return float(1.0 / (1.0 + np.exp(-(c0 + c1 * np.log(r / (1 - r)) + c2 * (m / 30.0 - 1.0)))))
+
+
+def calibrated_rate(hist_rate: float | None, apps: int, team_games: int, cal: dict,
+                    minutes: float | None = None) -> float:
     """Availability base rate, calibrated by the model audit (fitted on 2021-22 -> 2022-23).
 
     Raw games-played rates are far too extreme: for fantasy-relevant players, last season's rate
     (longest absence excluded) barely predicts next season (preseason line ~ flat), and in-season
-    only ~38% of a player's deviation from average carries forward. So:
+    only part of a player's deviation from average carries forward. So:
       preseason  a0 = pre_intercept + pre_slope * hist_rate
-      in-season  a1 = in_intercept + in_slope * (prior_games * hist_rate + apps) / (prior_games + team_games)
+      in-season  a1 = in_season_calibration((prior_games * hist_rate + apps) / (prior_games + team_games), minutes)
     blended by w = min(team_games / prior_games, 1). Known injuries are applied on top of this.
     """
     h = 0.85 if hist_rate is None or hist_rate != hist_rate else float(hist_rate)
@@ -152,7 +169,7 @@ def calibrated_rate(hist_rate: float | None, apps: int, team_games: int, cal: di
         return a0
     k = cal.get("prior_games", 10)
     rate = (k * h + apps) / (k + max(team_games, apps))
-    a1 = cal["in_intercept"] + cal["in_slope"] * rate
+    a1 = in_season_calibration(rate, cal, minutes)
     w = min(team_games / k, 1.0)
     return (1 - w) * a0 + w * a1
 
