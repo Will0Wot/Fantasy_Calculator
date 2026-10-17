@@ -450,7 +450,16 @@ with tab_build:
     from tradecalc.trade.evaluate import Trade, apply_trade, evaluate
     from tradecalc.trade.matchup import season_outlook
 
-    partner = st.selectbox("Trade partner", [t for t in team_ids if t != ME], format_func=team_label.get)
+    if st.session_state.get("builder_for") not in team_ids or st.session_state.get("builder_me") != ME:
+        st.session_state.builder_for = ME      # follow "Your team" when it changes
+        st.session_state.builder_me = ME
+    t0, t1 = st.columns(2)
+    side = t0.selectbox("Team", team_ids, key="builder_for", format_func=team_label.get,
+                        help="Any team in the league; the verdict is from this team's side.")
+    partner = t1.selectbox("Trade partner", [t for t in team_ids if t != side], format_func=team_label.get)
+    mine = side == ME
+    who = "You" if mine else state.team_name(side)
+    whose = "Your" if mine else state.team_name(side) + ("'" if state.team_name(side).endswith("s") else "'s")
 
     def label(pid):
         p = P[pid]
@@ -458,12 +467,16 @@ with tab_build:
         return f"{p.name} · {'/'.join(p.positions)} · {p.mu:.1f} FPPG{role}" + (" · " + p.flags[0] if p.flags else "")
 
     a, b = st.columns(2)
-    give = a.multiselect("You give", sorted(state.tradeable(ME), key=lambda i: -P[i].mu), format_func=label)
-    get = b.multiselect("You get", sorted(state.tradeable(partner), key=lambda i: -P[i].mu), format_func=label)
+    give = a.multiselect(f"{who} give{'' if mine else 's'}", sorted(state.tradeable(side), key=lambda i: -P[i].mu),
+                         format_func=label, key=f"give_{side}")
+    get = b.multiselect(f"{who} get{'' if mine else 's'}", sorted(state.tradeable(partner), key=lambda i: -P[i].mu),
+                        format_func=label, key=f"get_{side}_{partner}")
     precise = st.checkbox("Monte Carlo win probabilities (slower)")
 
     if give and get:
-        trade = Trade(ME, partner, tuple(give), tuple(get))
+        if not mine:
+            st.caption(f"Verdict and reasons are from {whose} side (\"you\" = {state.team_name(side)}).")
+        trade = Trade(side, partner, tuple(give), tuple(get))
         with st.spinner("Simulating the rest of the season…"):
             r = evaluate(trade, state, precise=precise)
         from tradecalc.trade.explain import explain
@@ -493,19 +506,19 @@ with tab_build:
                                   subset=["Change"]),
                              hide_index=True, use_container_width=True)
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Your expected wins", f"{r.you.wins_after:.2f}", f"{r.you.d_wins:+.2f}")
-        c2.metric("Your points / week", f"{r.you.pts_after:,.0f}", f"{r.you.d_pts:+.1f}")
+        c1.metric(f"{whose} expected wins", f"{r.you.wins_after:.2f}", f"{r.you.d_wins:+.2f}")
+        c2.metric(f"{whose} points / week", f"{r.you.pts_after:,.0f}", f"{r.you.d_pts:+.1f}")
         c3.metric(f"{state.team_name(partner)} wins", f"{r.partner.wins_after:.2f}", f"{r.partner.d_wins:+.2f}")
         c4.metric(f"{state.team_name(partner)} pts / week", f"{r.partner.pts_after:,.0f}", f"{r.partner.d_pts:+.1f}")
         with st.expander("Model details"):
             st.markdown("\n".join(f"- {d}" for d in r.drivers))
 
         new, _ = apply_trade(trade, state.rosters, state)
-        before, after = season_outlook(ME, state.rosters, state), season_outlook(ME, new, state)
+        before, after = season_outlook(side, state.rosters, state), season_outlook(side, new, state)
         chart = pd.DataFrame({"Week": [x["week"] for x in before["weeks"]],
                               "Before": [x["p"] for x in before["weeks"]],
                               "After": [x["p"] for x in after["weeks"]]}).set_index("Week")
-        st.caption("Your weekly win probability, before vs after")
+        st.caption(f"{whose} weekly win probability, before vs after")
         st.line_chart(chart, height=260, color=["#94a3b8", "#3b82f6"])
     else:
         st.info("Pick at least one player on each side.")

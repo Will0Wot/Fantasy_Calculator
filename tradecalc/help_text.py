@@ -113,6 +113,8 @@ def trade_builder(cfg) -> str:
     t = cfg["trade"]
     return f"""
 **How a trade is judged:** one question, *how many more weekly matchups will I win the rest of the season?*
+Pick any two teams: **Team** is the side the verdict is written for (it starts as your team), and **Trade
+partner** is the other side.
 
 1. **Swap the players** you picked.
 2. **Fix both rosters.** Each team keeps a full active roster:
