@@ -220,11 +220,13 @@ profiles:
     confidence: low
 
   long_absence:
+    # No known injury: a healthy player is not marked down on production; a small extra games
+    # discount only (his normal games-played rate already leaves this absence out).
     label: Long absence last season (cause unknown)
     match: []
     typical_days: 0
     rtp: 1.0
-    year1: {fppg: 0.95, avail: 0.92, sigma: 1.05}
+    year1: {fppg: 1.0, avail: 0.97, sigma: 1.0}
     year2: {fppg: 1.0, avail: 1.0, sigma: 1.0}
     ramp_days: 0
     ramp: 1.0

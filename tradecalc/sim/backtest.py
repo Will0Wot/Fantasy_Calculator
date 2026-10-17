@@ -19,7 +19,7 @@ from tradecalc.sim.rates import estimate_rates
 
 
 def run(H, params: dict, test_season: str, prev_season: str, every: int = 4, start: str | None = None,
-        k_baseline: float = 6.0, carry: float = 0.5):
+        k_baseline: float = 6.0, carry: float = 0.5, prev2_season: str | None = None):
     logs = H.logs
     cur_all, prev_logs = logs[logs.season == test_season], logs[logs.season == prev_season]
     tl = H.team_logs
@@ -37,7 +37,8 @@ def run(H, params: dict, test_season: str, prev_season: str, every: int = 4, sta
     out = []
     for d in dates:
         before = cur_all[cur_all.game_date < d]
-        rm = estimate_rates(before, prev_logs, params["rate_k"], H.pos_of, carry=carry)
+        rm = estimate_rates(before, prev_logs, params["rate_k"], H.pos_of, carry=carry,
+                            prev2=logs[logs.season == prev2_season] if prev2_season else None)
         dm = estimate_defense(tl_cur[tl_cur.game_date < d], params["def_k"], tl_prev)
         lg_rates = rm.league["ALL"]
         cur_fp = before.groupby("player_id")["fp"].agg(["mean", "size"])

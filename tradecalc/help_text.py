@@ -86,8 +86,19 @@ def simulate(params: dict | None) -> str:
 7. **Your lineup.** Each day the best eligible players who are active are started. Then all the points are added
    up and compared.
 
-**Before the season** there are no games yet, so minutes come from last season, ESPN's depth chart and ESPN's
-projected minutes. The rotation is trimmed to a realistic total, with deep-bench minutes cut first.
+**Current starting lineups.** Every team's starters come from ESPN's depth chart as it stands today. A listed
+starter gets at least starter-level minutes, and backups are capped by their depth slot (6th man ~30, third
+string ~22, deeper ~12). The rotation is then trimmed to a real game's total, cutting the deep bench first. Once
+this season's games are played, a player's real minutes take over. The lineups used are shown under each
+simulation.
+
+**Players hurt last season but healthy now** aren't judged on their injury-shortened year:
+- *Minutes* come from their last healthy season (plus the depth chart and ESPN), not from limited games.
+- *A long absence with no known cause* doesn't lower their projected production.
+- *Known major injuries* (an ACL or Achilles tear, for example) still carry the research-based effects on
+  games played.
+- *Per-minute production* still comes from last season. Testing showed that adding the season before made
+  projections slightly worse, even for players coming off injury.
 
 **Dates:** only the remaining days of the week are simulated. Points from days already played are added as they
 actually happened. The schedule grid shows ● for games still to play and ○ for games already played.

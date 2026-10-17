@@ -76,22 +76,37 @@ def league_means(logs: pd.DataFrame, pos_of) -> dict[str, dict]:
 
 
 def estimate_rates(cur: pd.DataFrame, prev: pd.DataFrame, k: dict[str, float], pos_of,
-                   carry: float = 0.5) -> RateModel:
-    """Rates for every player seen this season or last.
+                   carry: float = 0.5, prev2: pd.DataFrame | None = None, prev2_weight: float = 0.5,
+                   short_season_share: float = 0.55) -> RateModel:
+    """Rates for every player seen this season or the two before.
 
-    cur: this season's player-games so far; prev: last season's player-games.
+    cur: this season's player-games so far; prev / prev2: the last two seasons.
+    The prior is built from both past seasons: last season at full weight and the one before
+    at `prev2_weight`. For a player whose last season was cut short (fewer than
+    `short_season_share` of the games he played two seasons ago, e.g. an injury), the weights
+    flip: his healthier season counts fully and the short one at half, so a long injury
+    does not wash his numbers out toward an average player's.
     """
     lg = league_means(prev if len(prev) else cur, pos_of)
-    tc, tp = _totals(cur), _totals(prev)
-    names = pd.concat([cur, prev]).groupby("player_id")["player_name"].last()
+    frames = [cur, prev] + ([prev2] if prev2 is not None and len(prev2) else [])
+    names = pd.concat(frames).groupby("player_id")["player_name"].last()
     ids = names.index
-    tc, tp = tc.reindex(ids).fillna(0), tp.reindex(ids).fillna(0)
+    tc = _totals(cur).reindex(ids).fillna(0)
+    tp = _totals(prev).reindex(ids).fillna(0)
+    if prev2 is not None and len(prev2):
+        tp2 = _totals(prev2).reindex(ids).fillna(0)
+        g1 = prev.groupby("player_id").size().reindex(ids).fillna(0)
+        g2 = prev2.groupby("player_id").size().reindex(ids).fillna(0)
+        short = (g2 >= 30) & (g1 < short_season_share * g2)
+        w1 = pd.Series(1.0, index=ids).where(~short, prev2_weight)
+        w2 = pd.Series(prev2_weight, index=ids).where(~short, 1.0)
+        tp = tp.mul(w1, axis=0) + tp2.mul(w2, axis=0)
     grp = names.map(lambda n: pos_of(n) or "ALL")
     rates, expo = {}, {}
     for s, (num, exp) in RATES.items():
         base = grp.map(lambda gname: lg.get(gname, lg["ALL"])[s])
         K = k[s]
-        prior = (K * base + tp[num]) / (K + tp[exp])           # last season, shrunk to position mean
+        prior = (K * base + tp[num]) / (K + tp[exp])           # past seasons, shrunk to position mean
         strength = K + carry * tp[exp]                          # how much the prior counts this season
         rates[s] = (strength * prior + tc[num]) / (strength + tc[exp])
         expo[s] = tc[exp]

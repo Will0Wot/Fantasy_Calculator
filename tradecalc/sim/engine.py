@@ -354,6 +354,8 @@ def fantasy_week(sims: GameSims, rosters: dict[str, list[str]], days: list[date]
 
 # --- live world (current season, ESPN rosters / depth charts / injuries) -------------------
 
+STARTER_FLOOR = 26.0                         # listed starters get at least this many minutes
+BACKUP_CAPS = {2: 30.0, 3: 22.0, 4: 12.0}     # depth 2 (6th man) / 3 / 4+ at most this many
 DEPTH_MINUTES = {1: 31.6, 2: 22.0, 3: 13.5}   # by position depth; replaced by params["depth_minutes"] ranks
 PROJ_KEYS = {"fga": "FGA", "fta": "FTA", "reb": "REB", "ast": "AST", "stl": "STL", "blk": "BLK", "tov": "TOV"}
 
@@ -386,9 +388,14 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
     """World for the live league as of state.today.
 
     Expected minutes blend three views, then this season's games take over (weight n/(n+3)):
-      - last season's minutes (last 20 games), if he is on the same team
+      - last season's minutes (last 20 games), if he is on the same team; if last season was
+        cut short (under 55% of the games he played the season before, e.g. an injury), his
+        minutes from that healthier season instead
       - his ESPN depth-chart slot (typical minutes for that depth)
       - ESPN's projected minutes
+    Then the current depth chart sets the role: a listed starter gets at least starter
+    minutes (STARTER_FLOOR) and backups are capped by depth slot (BACKUP_CAPS), so the
+    simulation uses each team's starting lineup as it stands now.
     A new head coach rescales starters' minutes by the coaches' rotation concentration.
     Rates come from box scores; players with under 100 NBA minutes use ESPN's projection.
     """
@@ -403,6 +410,13 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
     nba_minutes = rates.attrs["minutes"]
     depth_min = _depth_prior(params)
 
+    from tradecalc.sim.history import prev_season as _prev_season
+
+    prv2 = L[L.season == _prev_season(prev)]
+    g1 = prv.groupby("player_id").size()
+    g2 = prv2.groupby("player_id").size()
+    mpg2 = prv2.groupby("player_id")["min"].mean()
+    short_last = {pid for pid, n2 in g2.items() if n2 >= 30 and g1.get(pid, 0) < 0.55 * n2}
     last20 = prv.sort_values("game_date").groupby("player_id").tail(20)
     last_team = prv.sort_values("game_date").groupby("player_id")["team"].last()
     prev_mpg = last20.groupby("player_id")["min"].mean()
@@ -433,7 +447,9 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
             continue
         pid = pid_by_key.get(k)
         views = []
-        if pid is not None and pid in prev_mpg.index and last_team.get(pid) == team:
+        if pid in short_last:                       # last season cut short: use his healthier season
+            views.append(float(mpg2[pid]))
+        elif pid is not None and pid in prev_mpg.index and last_team.get(pid) == team:
             views.append(float(prev_mpg[pid]))
         if k in dpt:
             views.append(depth_min.get(min(dpt[k][1], 4), 4.0))
@@ -448,6 +464,12 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
         cn, cb = coach_now.get(team), coach_before.get(team)
         if cn and cb and cn != cb and prior >= 28 and cn in cpar and cb in cpar:
             prior *= cpar[cn].get("top5_share", clg.get("top5_share", 1)) / cpar[cb].get("top5_share", clg.get("top5_share", 1))
+        # current depth chart sets the role (only when it lists him on this team)
+        if k in dpt and dpt[k][0] == team:
+            d_ = dpt[k][1]
+            prior = max(prior, STARTER_FLOOR) if d_ == 1 else min(prior, BACKUP_CAPS.get(d_, BACKUP_CAPS[4]))
+        elif k not in dpt:
+            prior = min(prior, BACKUP_CAPS[4])
         g = cur[(cur.player_name.map(norm_name) == k) & (cur.team == team)] if len(cur) else cur
         n = len(g)
         exp_min = prior if n == 0 else (n * _ewma(g["min"]) + 3 * prior) / (n + 3)
@@ -482,6 +504,7 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
     impact = {id2key[i]: v for i, v in imp.items() if i in id2key}
     net = _team_strength(tl_cur if len(tl_cur) >= 300 else tl_prev)
     w = World(state.today, P, rotation, dm, net, impact, params, H.scoring)
+    w.depth = depth.assign(team=depth["team"].map(to_nba))      # for showing current starters
     # back-to-backs from the ESPN schedule
     by_team = defaultdict(set)
     for g_ in state.league.pro_games:

@@ -372,6 +372,28 @@ with tab_sim:
             st.caption("Per-game stat lines are averages over simulations in which the player is active. "
                        "'FP to team' counts only games he is started. 'G' = games left in the simulated days.")
 
+            dep = getattr(world, "depth", None)
+            if dep is not None and len(dep):
+                from tradecalc.model.names import norm_name as _nn
+                from tradecalc.teams import to_nba as _to_nba
+
+                nba_teams = sorted({_to_nba(x) for x in res.players["nba_team"] if x})
+                out_now = {_nn(p.name) for p in state.players.values() if p.injury_status in ("OUT", "OUT_FOR_SEASON", "INJURY_RESERVE")}
+                srows = []
+                for tm in nba_teams:
+                    s5 = dep[(dep.team == tm) & (dep.depth == 1)]
+                    row = {"Team": tm}
+                    for pos in ("PG", "SG", "SF", "PF", "C"):
+                        nm = s5.loc[s5.pos == pos, "name"]
+                        nm = nm.iat[0] if len(nm) else ""
+                        row[pos] = nm + (" (out)" if nm and _nn(nm) in out_now else "")
+                    srows.append(row)
+                with st.expander("Starting lineups used in this simulation (ESPN depth charts, as of today)"):
+                    st.dataframe(pd.DataFrame(srows), hide_index=True, use_container_width=True)
+                    st.caption("Listed starters get at least starter minutes; backups are capped by their depth slot. "
+                               "Once games are played, real minutes take over. A starter who is out is replaced "
+                               "by whoever the simulation gives his minutes to.")
+
             st.markdown("**Schedule this week**  ·  ● game left to play · ○ game already played · blank = no game")
             sim_days = set(res.days)
             grid = []
