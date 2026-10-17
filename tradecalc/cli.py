@@ -353,6 +353,17 @@ def forecast_test_cmd(leagues: int = typer.Option(12, help="Mock leagues for the
     typer.echo(f"\nSaved {FT.report_path()} (shown in the app's Forecast tests tab).")
 
 
+@app.command("seed-export")
+def seed_export():
+    """Export finished seasons' NBA data to tradecalc/data/seed/ (commit those files, not the cache)."""
+    from tradecalc.seed import export_seed
+
+    cfg, conn = _ctx()
+    seasons = [r[0] for r in conn.execute("SELECT season FROM season_state WHERE complete=1 ORDER BY season")]
+    for path in export_seed(conn, seasons):
+        typer.echo(f"  {path.relative_to(path.parents[2])}  {path.stat().st_size / 1e6:.1f} MB")
+
+
 @app.command("sim-fit")
 def sim_fit():
     """Fit the projection engine (rates, usage, minutes, rest, coaches, noise) on recent seasons."""

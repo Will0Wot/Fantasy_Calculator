@@ -440,7 +440,7 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
     espn = {norm_name(p.name): p for p in state.players.values()}
     keys = set(dpt) | {k for k, p in espn.items() if p.pro_team and p.pro_team != "FA"}
     rows = []
-    for k in keys:
+    for k in sorted(keys):  # sorted: set order changes between runs (hash seed), ties must not
         p = espn.get(k)
         team = to_nba(p.pro_team) if p is not None and p.pro_team not in ("", "FA") else dpt.get(k, (None,))[0]
         if not team:

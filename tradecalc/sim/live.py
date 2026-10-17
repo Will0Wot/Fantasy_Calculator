@@ -122,7 +122,7 @@ def save_validation(r: dict, path=VALIDATION_PATH):
     buckets = m.groupby("bucket", observed=True).agg(n=("won", "size"), predicted=("p_win", "mean"),
                                                      actual=("won", "mean")).reset_index()
     out = {
-        "run_on": date.today().isoformat(),
+        "run_on": __import__("tradecalc.clock", fromlist=["league_today"]).league_today().isoformat(),
         "test_season": r.get("test_season"),
         "fit_seasons": r.get("fit_seasons"),
         "points": {k: {c: (None if pd.isna(v) else round(float(v), 3)) for c, v in row.items()}

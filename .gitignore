@@ -7,3 +7,4 @@ __pycache__/
 .DS_Store
 .claude/
 .pytest_cache/
+tradecalc/data/cache.sqlite

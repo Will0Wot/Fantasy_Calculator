@@ -372,7 +372,7 @@ def build_report(H, before: dict, after: dict, tuning: list[dict], fit_seasons: 
     cols = ["league", "checkpoint", "team", "exp_wins", "p10", "p90", "p_first", "p_last", "avg_rank",
             "actual_wins", "actual_rank", "naive_value", "wins_so_far"]
     return {
-        "run_on": _date.today().isoformat(), "test_season": after["season"], "fit_seasons": fit_seasons,
+        "run_on": __import__("tradecalc.clock", fromlist=["league_today"]).league_today().isoformat(), "test_season": after["season"], "fit_seasons": fit_seasons,
         "n_leagues": len(after["leagues"]), "n_sims": after["n_sims"],
         "metrics_before": metrics(before["results"]).to_dict("records"),
         "metrics_after": metrics(after["results"]).to_dict("records"),

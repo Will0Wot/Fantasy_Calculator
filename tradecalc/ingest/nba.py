@@ -118,7 +118,9 @@ def refresh_season(
             NBA_BLOCKED = True
             from tradecalc.ingest.espn_box import refresh_from_espn
 
-            r = refresh_from_espn(conn, season, first_day or date.today())
+            from tradecalc.clock import league_today
+
+            r = refresh_from_espn(conn, season, first_day or league_today())
             conn.execute("INSERT OR REPLACE INTO season_state(season, complete, last_fetch) VALUES (?,?,?)",
                          (season, 0, time.time()))
             conn.commit()

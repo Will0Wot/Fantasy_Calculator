@@ -14,6 +14,9 @@ def context(cfg_path=None):
     load_dotenv()
     cfg = load_config(cfg_path)
     conn = connect(cfg.path(cfg["data"]["cache_db"]))
+    from tradecalc.seed import ensure_seed
+
+    ensure_seed(conn)  # finished seasons ship as files in data/seed/ (the cache itself isn't committed)
     return cfg, conn
 
 

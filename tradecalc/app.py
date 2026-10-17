@@ -27,11 +27,20 @@ try:
 except Exception:  # no secrets file locally
     pass
 
+from tradecalc.clock import league_today, league_tz  # noqa: E402
 from tradecalc.session import load_state  # noqa: E402
 
 # Hosted (shared) copy: injury corrections are read-only so one visitor can't change everyone's model.
 HOSTED = bool(os.environ.get("TRADECALC_HOSTED")) or str(Path(__file__).resolve()).startswith("/mount/src")
 REFRESH_COOLDOWN_S = 600
+STATE_TTL_S = 3600   # league data (rosters, injuries, scores, box scores) is rebuilt at least hourly
+
+
+def _et(ts: float, fmt: str) -> str:
+    """Format a timestamp in league (Eastern) time, whatever the server's clock is."""
+    from datetime import datetime as _dt
+
+    return _dt.fromtimestamp(ts, league_tz()).strftime(fmt) + " ET"
 
 
 # --- state (shared by every visitor) --------------------------------------------------------
@@ -41,8 +50,11 @@ def shared() -> dict:
     return {"nonce": 0, "last_refresh": 0.0}
 
 
-@st.cache_resource(show_spinner="Loading league, stats and injuries…", max_entries=6)
+@st.cache_resource(show_spinner="Loading league, stats and injuries…", max_entries=6, ttl=STATE_TTL_S)
 def get_state(today: str, nonce: int):
+    """Cached per (day, manual-refresh counter) and expired after STATE_TTL_S, so the next visit
+    after an hour rebuilds it. load_state re-downloads whatever its own caches consider stale
+    (ESPN data after espn_cache_ttl_hours, current-season box scores after an hour)."""
     warnings = []
     s = load_state(force=False, today=None if today.startswith("auto:") else today, warn=warnings.append)
     return s, warnings
@@ -65,7 +77,7 @@ with st.sidebar:
             SH["last_refresh"] = time.time()
             SH["nonce"] += 1
 
-state, warnings = get_state(pretend or f"auto:{date.today().isoformat()}", SH["nonce"])
+state, warnings = get_state(pretend or f"auto:{league_today().isoformat()}", SH["nonce"])
 for w in warnings:
     st.sidebar.warning(w)
 
@@ -96,7 +108,7 @@ with st.sidebar:
     st.caption(f"League: {state.league.settings['name']} · {len(team_ids)} teams")
     st.caption(f"Model date: {state.today:%b %d, %Y}")
     if SH["last_refresh"]:
-        st.caption(f"Last manual refresh: {time.strftime('%b %d %H:%M', time.localtime(SH['last_refresh']))}")
+        st.caption(f"Last manual refresh: {_et(SH['last_refresh'], '%b %d %H:%M')}")
 
 
 def owner(p) -> str:
@@ -104,7 +116,7 @@ def owner(p) -> str:
 
 
 def a_now(p) -> float:
-    return state.a_next(p, max(state.today, date.today()))
+    return state.a_next(p, max(state.today, league_today()))
 
 
 # --- date banner ---------------------------------------------------------------------------
@@ -127,7 +139,8 @@ def how_it_works(md: str):
         st.markdown(md)
 
 
-@st.cache_resource(show_spinner="Building projection engine (rates, minutes, rotations, defense)…", max_entries=4)
+@st.cache_resource(show_spinner="Building projection engine (rates, minutes, rotations, defense)…", max_entries=4,
+                   ttl=STATE_TTL_S)
 def get_world(today: str | None, nonce: int):
     from tradecalc.session import context
     from tradecalc.sim.live import live_world
@@ -208,7 +221,7 @@ with tab_league:
     from tradecalc.trade.standings import last_place_line
 
     how_it_works(H.league_forecast(cfg))
-    fkey = (pretend or date.today().isoformat(), SH["nonce"])
+    fkey = (pretend or league_today().isoformat(), SH["nonce"])
     saved = SH.get("forecast")  # detailed forecast shared by everyone for an hour
     have_detailed = bool(saved and saved[0] == fkey and time.time() - saved[1] < 3600)
     c1, c2 = st.columns([3, 2])
@@ -225,7 +238,7 @@ with tab_league:
     if have_detailed:
         fc = SH["forecast"][2]
         c1.success(f"Detailed game-by-game forecast · run "
-                   f"{time.strftime('%H:%M', time.localtime(SH['forecast'][1]))}")
+                   f"{_et(SH['forecast'][1], '%H:%M')}")
     else:
         fc = league_forecast(fkey[0], fkey[1], "quick", 10000)
         c1.info("Quick forecast (season model). Press **Run detailed forecast** for the game-by-game engine.")
@@ -309,7 +322,7 @@ with tab_sim:
                           help="Defaults to Team A's scheduled opponent; pick any other team for a what-if.")
         n_sims = c4.select_slider("Simulations", [1000, 5000, 10000, 25000], value=10000)
         if st.button("Run simulation", type="primary"):
-            world, coaches_now = get_world(pretend or date.today().isoformat(), SH["nonce"])
+            world, coaches_now = get_world(pretend or league_today().isoformat(), SH["nonce"])
             with st.spinner(f"Simulating {n_sims:,} weeks…"):
                 res, sims = run_matchup(world, state, ta, tb, state.cal.weeks[wk_n - 1], n=n_sims, seed=None,
                                         coaches_now=coaches_now)
@@ -590,7 +603,7 @@ with tab_inj:
     st.markdown("How the model treats each injured or recently-returned player. "
                 "Research behind the assumptions: `docs/injury_research.md`.")
     only_rostered = st.checkbox("Rostered players only", value=True)
-    base_day = max(state.today, date.today())
+    base_day = max(state.today, league_today())
     rows = []
     for p in P.values():
         v = p.injury

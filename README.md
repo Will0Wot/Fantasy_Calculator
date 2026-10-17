@@ -70,9 +70,13 @@ games played and volatility. Research, sources and derivations: `docs/injury_res
 3. Share the app link. Each person picks their team in the sidebar; the link remembers it (`?team=<id>`).
 
 Notes
-- `tradecalc/data/cache.sqlite` is committed: it carries past seasons' box scores, fitted inputs and ESPN
-  responses, so the app starts without hitting stats.nba.com (which often blocks cloud servers).
-  This season's box scores fall back to ESPN automatically when stats.nba.com is unreachable.
+- The local cache (`tradecalc/data/cache.sqlite`) is not committed. Finished seasons' NBA data ships as small
+  compressed files in `tradecalc/data/seed/` (box scores, team logs, ages/usage, on/off), loaded into the cache on
+  first start, because stats.nba.com often blocks cloud servers. Everything else (ESPN rosters, injuries, depth
+  charts, this season's games) is downloaded live. This season's box scores fall back to ESPN automatically when
+  stats.nba.com is unreachable. After a season ends: `tradecalc seed-export`, then commit the new seed files.
+- "Today" is the league's clock (US Eastern, `league.timezone`), not the server's, which is UTC on Streamlit Cloud.
+- League data is rebuilt at least hourly (cache expiry), or right away with **Refresh data**.
 - On the hosted copy, injury corrections are read-only. To change them, edit
   `tradecalc/data/injury_overrides.csv` / `injury_history.csv` locally, commit and push; the app redeploys.
 - If the league goes private, add `ESPN_S2` and `SWID` under the app's *Settings → Secrets*.

@@ -96,7 +96,9 @@ def game_rows(summary: dict, game_day: date, id_by_name: dict[str, int]) -> list
 def refresh_from_espn(conn: sqlite3.Connection, season: str, first_day: date, today: date | None = None) -> dict:
     """Fill game_logs for `season` from ESPN, for every finished game from the day after the
     last cached ESPN date (or the season start) through yesterday."""
-    today = today or date.today()
+    from tradecalc.clock import league_today
+
+    today = today or league_today()
     last = conn.execute("SELECT MAX(game_date) d FROM game_logs WHERE season=?", (season,)).fetchone()["d"]
     if last:
         # re-fetch the last day only if ESPN wrote it (it may have been partial); days that

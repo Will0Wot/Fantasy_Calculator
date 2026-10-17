@@ -145,7 +145,9 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
     per-minute production, so role (starter vs bench) and minutes changes move the projection."""
     lg, m, scoring = cfg["league"], cfg["model"], cfg["scoring"]
     cal = Calendar(league, cfg)
-    real_today = date.today()
+    from tradecalc.clock import league_today
+
+    real_today = league_today(cfg)
     today = today or real_today
     if today < cal.first_day:
         today = cal.first_day

@@ -11,6 +11,7 @@ league:
   my_team_id: 1               # ESPN team id of the user's team ("Wills men")
   num_teams: 12
   regular_season_weeks: 24
+  timezone: America/New_York  # ESPN scoring periods and NBA game days are Eastern-time dates
   playoffs: false
   tie_value: 0.5              # ESPN matchupTieRule NONE -> a tie stands, counts as half a win
 

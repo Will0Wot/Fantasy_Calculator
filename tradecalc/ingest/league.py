@@ -18,7 +18,7 @@ import requests
 from tradecalc.db import cache_get, cache_put
 
 BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/fba/seasons/{season}"
-ET = ZoneInfo("America/New_York")
+ET = ZoneInfo("America/New_York")  # NBA/ESPN game days are Eastern dates (see tradecalc/clock.py)
 
 # ESPN stat ids -> stats.nba.com box-score column names.
 ESPN_STAT = {
