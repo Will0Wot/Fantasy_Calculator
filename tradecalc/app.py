@@ -27,6 +27,28 @@ try:
 except Exception:  # no secrets file locally
     pass
 
+def _drop_stale_code() -> None:
+    """Streamlit Cloud pulls a new commit and re-runs this file, but keeps the `tradecalc` modules
+    it already imported, so new app code would call old functions (a TypeError after a signature
+    change). If any source or config file changed since they were imported, drop them so they
+    re-import from disk, and clear caches holding objects built by the old code."""
+    root = Path(__file__).resolve().parent
+    files = sorted(p for ext in ("*.py", "*.yaml", "*.json") for p in root.rglob(ext)
+                   if not {"tests", "data"} & set(p.relative_to(root).parts))
+    sig = "|".join(f"{p.relative_to(root)}:{p.stat().st_mtime_ns}:{p.stat().st_size}" for p in files)
+    loaded = sys.modules.get("tradecalc")
+    if loaded is not None and getattr(loaded, "_code_sig", None) != sig:
+        for name in [m for m in sys.modules if m == "tradecalc" or m.startswith("tradecalc.")]:
+            del sys.modules[name]
+        st.cache_resource.clear()
+        st.cache_data.clear()
+    import tradecalc
+
+    tradecalc._code_sig = sig
+
+
+_drop_stale_code()
+
 from tradecalc.clock import league_today, league_tz  # noqa: E402
 from tradecalc.session import load_state  # noqa: E402
 
