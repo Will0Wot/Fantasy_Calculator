@@ -290,6 +290,27 @@ out, $P(\text{return this season})$, and year-1 / year-2 multipliers on producti
 plus a ramp-up window. Details and sources: `docs/injury_research.md`. A player's normal
 games-played rate excludes each season's longest absence so injuries are not double counted.
 
+### 3.1 Historical injury reports (collected for backtesting)
+
+`ingest/injury_reports.py` (`tradecalc injury-reports`) downloads the NBA's official pre-game injury
+report (the 5 PM ET PDF, about two hours before most tip-offs) for every game day of 2021-22 to
+2025-26: 816 reports, about 92,000 rows (game, team, player, status, reason), stored in
+`data/seed/injury_reports_<season>.csv.gz`. Checks: every report parsed, every team mapped, 90–96% of
+names match a box-score player (the rest mostly missed the whole season), and players listed Out
+played 0.1% of the time. How often players really played, by their 5 PM status (G League
+assignments excluded):
+
+| Status | 2021-22 | 2022-23 | 2023-24 | 2024-25 | 2025-26 | all | rows |
+|---|---|---|---|---|---|---|---|
+| Out | 0.3% | 0.2% | 0.1% | 0.0% | 0.1% | 0.1% | 41,658 |
+| Doubtful | 5.0% | 4.7% | 1.5% | 2.6% | 1.8% | 3.0% | 1,524 |
+| Questionable | 52% | 51% | 56% | 50% | 55% | 52% | 11,561 |
+| Probable | 92% | 87% | 90% | 91% | 92% | 90% | 4,335 |
+| Available | 81% | 84% | 82% | 89% | 88% | 85% | 4,191 |
+
+The live model gets ESPN's feed, which only says "day-to-day", and uses 50% for all of them: right for
+Questionable, far too high for Doubtful and too low for Probable.
+
 ---
 
 ## 4. League forecast

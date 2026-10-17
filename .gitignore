@@ -8,3 +8,4 @@ __pycache__/
 .claude/
 .pytest_cache/
 tradecalc/data/cache.sqlite
+tradecalc/data/injury_reports/raw/

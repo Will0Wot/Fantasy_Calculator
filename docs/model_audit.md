@@ -219,9 +219,11 @@ the loaded modules, and a changed file reloads them.
    rotation-minutes total.
 5. **One huge game moves a projection a lot** (an 80-point game takes a 20-point player to 28.6). Capping
    was tested and makes projections worse (§7); the current behaviour is the better one on the data.
-6. **Injury reports aren't backtestable yet.** No historical injury reports exist. The app now records the
-   daily report (`status_snapshots`). After this season, the injury model (§3 of the methodology) can be
-   tested the same way.
+6. **Injury reports: now collected.** The NBA's official 5 PM report for every game day of 2021-22 to
+   2025-26 (816 reports, ~92,000 rows) is in `data/seed/` (methodology §3.1). First finding: players listed
+   Doubtful played 3% of the time, Questionable 52%, Probable 90%, while the model gives every
+   "day-to-day" player 50% because ESPN's feed doesn't say which. *Next:* read the official report live
+   for the finer status, and backtest injury durations and return ramps against these reports.
 7. **Lineup management.** Fill-ins assume every absence is known before lock (ψ = 1). For a manager who
    doesn't set lineups daily, depth is worth less; set `lineup.fill_in` below 1.
 

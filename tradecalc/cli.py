@@ -388,6 +388,22 @@ def audit(quick: bool = typer.Option(False, help="Fewer mock leagues and matchup
                        f"(league.yaml model.matchup_shrink is {cfg['model']['matchup_shrink']})")
 
 
+@app.command("injury-reports")
+def injury_reports_cmd(season: list[str] = typer.Option(["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"],
+                                                        "--season", help="Seasons to collect (repeatable).")):
+    """Download the NBA's official 5 PM injury report for every game day of past seasons and parse it
+    into data/seed/injury_reports_<season>.csv.gz (raw PDFs cached in data/injury_reports/raw/).
+    Needs pdfplumber: pip install pdfplumber."""
+    from tradecalc.ingest import injury_reports as IR
+    from tradecalc.ingest import nba
+
+    cfg, conn = _ctx()
+    days = {s: IR.game_days_from_logs(nba.game_logs(conn, s)) for s in season}
+    for s, d in days.items():
+        typer.echo(f"{s}: {len(d)} game days")
+    IR.collect(days, cfg.path("data/injury_reports/raw"), cfg.path("data/seed"), log=typer.echo)
+
+
 @app.command("seed-export")
 def seed_export():
     """Export finished seasons' NBA data to tradecalc/data/seed/ (commit those files, not the cache)."""

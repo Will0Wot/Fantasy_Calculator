@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pdfplumber"]   # pdfplumber: `tradecalc injury-reports` only
 app = ["streamlit"]
 
 [project.scripts]

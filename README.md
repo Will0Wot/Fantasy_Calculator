@@ -23,6 +23,7 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 | `tradecalc sim-validate` | Out-of-sample validation of the engine on last season |
 | `tradecalc forecast-test` | Backtest the league forecast on mock leagues from last season |
 | `tradecalc audit [--baseline] [--quick]` | Full model audit on 2023-24, 2024-25, 2025-26 + break tests (Model audit tab) |
+| `tradecalc injury-reports [--season S]` | Download and parse the NBA's official 5 PM injury report for every past game day (needs `pdfplumber`) |
 
 ## App
 
