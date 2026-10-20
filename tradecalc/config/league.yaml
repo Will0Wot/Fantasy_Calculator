@@ -113,6 +113,11 @@ trade:
   top_n_per_opponent: 5
   finder_min_gain: 0.10        # finder only lists trades gaining at least this many wins (= ACCEPT)
 
+streaming:
+  moves_per_week: 1           # ESPN matchupAcquisitionLimit = 1 (adds per matchup); raise if your league allows more
+  drop_candidates: 5          # only a roster's 5 lowest rest-of-season values are considered for dropping
+  add_candidates: 30          # free agents tried: the best 30 by points this week, plus the best 10 long-term
+
 data:
   adp_csv: data/adp.csv               # current-season ADP (platform ADP)
   prev_adp_csv: data/adp_prev.csv     # last-season ADP or rank, used to fit the ADP->FPPG curve

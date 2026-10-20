@@ -48,6 +48,7 @@ class Player:
     projection: dict = field(default_factory=dict)  # season per-game projection, nba column names
     prev_projection: dict = field(default_factory=dict)
     outlook: str = ""                   # ESPN season outlook blurb
+    pool_status: str = ""               # FREEAGENT (add now) | WAIVERS (claim) | ONTEAM
 
 
 @dataclass
@@ -170,6 +171,7 @@ def load_league(client: EspnClient, force=False) -> LeagueData:
     for entry in pool.get("players", []):
         pl = _player_from_espn(entry["player"], pro_teams, client.season)
         pl.on_team_id = entry.get("onTeamId", 0)
+        pl.pool_status = entry.get("status") or ""
         players[pl.espn_id] = pl
 
     teams: dict[int, Team] = {}

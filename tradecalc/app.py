@@ -149,10 +149,11 @@ st.info(f"📅 {state.week_status()}"
 
 # --- tabs --------------------------------------------------------------------------------
 
-(tab_match, tab_league, tab_sim, tab_build, tab_find, tab_players, tab_inj, tab_track, tab_test, tab_audit,
- tab_method, tab_help) = st.tabs(
-    ["📅 Matchup", "🏆 League forecast", "🎲 Simulate", "🔁 Trade builder", "🔎 Trade finder", "📊 Players",
-     "🩹 Injuries", "📈 Season tracker", "🧪 Forecast tests", "🔬 Model audit", "📐 Methodology", "❓ Help & accuracy"])
+(tab_match, tab_league, tab_sim, tab_build, tab_find, tab_stream, tab_players, tab_inj, tab_track, tab_test,
+ tab_audit, tab_method, tab_help) = st.tabs(
+    ["📅 Matchup", "🏆 League forecast", "🎲 Simulate", "🔁 Trade builder", "🔎 Trade finder", "🔄 Streaming",
+     "📊 Players", "🩹 Injuries", "📈 Season tracker", "🧪 Forecast tests", "🔬 Model audit", "📐 Methodology",
+     "❓ Help & accuracy"])
 
 from tradecalc import help_text as H  # noqa: E402
 
@@ -837,6 +838,13 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
 `tradecalc forecast-test`. Limits: mock leagues, not your league; managers never trade or pick up free agents in the
 test; lineups use a simple position rule.*
 """)
+
+# ---------------------------------------------------------------------------- Streaming
+with tab_stream:
+    how_it_works(H.streaming(cfg))
+    from tradecalc import streaming_page
+
+    streaming_page.render(st, state, ME, team_ids, team_label)
 
 # ---------------------------------------------------------------------------- Season tracker
 with tab_track:

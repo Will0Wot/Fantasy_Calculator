@@ -364,3 +364,27 @@ def help_glossary() -> str:
 - `tradecalc sim-fit` refits the simulator on the latest seasons. Worth doing every few weeks.
 - `tradecalc sim-validate` re-tests accuracy and updates the numbers on this page.
 """
+
+
+def streaming(cfg) -> str:
+    s = cfg.get("streaming", {})
+    return f"""
+**What this is:** a weekly pickup plan. In head-to-head points, a player who plays 4 games this week can
+be worth more to you this week than a better player who plays 2. Streaming means swapping your
+weakest roster spot for the free agent who helps most *this week*.
+
+**How the plan is chosen**
+1. **Candidates.** Your {s.get('drop_candidates', 5)} least valuable players (rest of season) can be dropped, an injured
+   player can move to an empty IR slot instead, and an open roster spot can simply be filled. Free agents are the
+   best available by points this week and by long-term value; players on waivers are skipped.
+2. **Every day of the week is tried.** Picking up on Wednesday keeps your dropped player's Monday and Tuesday
+   games. A pickup plays the same day (lineups lock at each game's tip-off).
+3. **Scored like a matchup.** Each move is run through the same weekly model as the Matchup tab: daily lineups,
+   bench players filling in, games left, injuries. That gives this week's new win chance.
+4. **Long-term check.** Each move is also judged on the rest of the season if you keep it, so the plan won't
+   drop a good player for a one-week rental. Moves are ranked by total expected wins: this week plus later weeks.
+5. **League limit.** ESPN allows {s.get('moves_per_week', 1)} pickup per matchup in this league; you can plan for more.
+
+**Good to know:** everyone sees the same free agents, so if your top choice gets picked up, use the next option
+in the list. Plans refresh with the data (hourly), so check again before you make the move.
+"""

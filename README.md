@@ -33,7 +33,7 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
 
 Tabs: Matchup (this week + rest of season), League forecast, Simulate (projection-engine Monte Carlo
-for any two teams), Trade builder, Trade finder, Players, Injuries (with editable overrides and injury
+for any two teams), Trade builder, Trade finder, Streaming (weekly drop / pickup plan for any team), Players, Injuries (with editable overrides and injury
 history), Forecast tests, Model audit (multi-season accuracy tests, before/after, break tests;
 report in `docs/model_audit.md`), Methodology (every formula: `docs/methodology.md`), Help.
 

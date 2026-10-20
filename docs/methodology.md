@@ -214,6 +214,29 @@ Enumerate all 1-for-1, 2-for-1, 1-for-2, 2-for-2 trades per partner (~9,500); pr
 (you may lose ≤ 5% of value sent; partner ≤ 15%); fully evaluate the best 300; keep
 $\Delta_{\text{you}} \ge 0.10$ and $\Delta_{\text{partner}} \ge -0.10$; rank by $\Delta_{\text{you}}$.
 
+### 1.10 Streaming planner (`trade/streaming.py`)
+
+For team $t$ and week $w$, a move is "on day $D$, drop $x$ (or move an injured $x$ to a free IR slot,
+or use an open spot) and add free agent $y$". The week is split at $D$: days before it are played by
+the old roster, days from $D$ by the new one, each with the daily fill-in lineups of §1.5:
+
+$$
+M = \sum_k \big[M(R_k, d_k) - M(R_k, d_{k+1})\big]
+$$
+
+where $M(R, d)$ is the expected counted points of roster $R$ from day $d$ to the end of the week
+($V$ likewise). This week's win chance follows §1.7, with points already scored added in. Candidates:
+the roster's 5 lowest rest-of-season values (plus IR / open-spot options) × the 30 free agents with the
+most expected points this week plus the 10 best long-term (ESPN status FREEAGENT; waivers skipped)
+× every remaining day the free agent plays. The 12 moves adding the most points are then ranked by
+
+$$
+\Delta = \Delta P(\text{win } w) + \Delta\, \mathbb E[\text{wins after } w \mid \text{move kept}]
+$$
+
+and the best is taken if $\Delta > 0.005$; repeated up to the league's pickup limit (ESPN:
+1 per matchup). The second term stops one-week rentals that cost more later than they win now.
+
 ---
 
 ## 2. Projection engine
