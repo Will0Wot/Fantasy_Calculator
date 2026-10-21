@@ -56,6 +56,7 @@ class Team:
     team_id: int
     name: str
     roster: list[int]                   # espn player ids
+    waiver_rank: int | None = None      # 1 = first claim on a dropped player
 
 
 @dataclass
@@ -185,7 +186,7 @@ def load_league(client: EspnClient, force=False) -> LeagueData:
             players[pl.espn_id] = pl
             ids.append(pl.espn_id)
         name = t.get("name") or f"{t.get('location', '')} {t.get('nickname', '')}".strip()
-        teams[t["id"]] = Team(t["id"], name.strip(), ids)
+        teams[t["id"]] = Team(t["id"], name.strip(), ids, t.get("waiverRank"))
 
     def _pts(side: dict) -> dict[int, float]:
         return {int(k): float(v) for k, v in (side.get("pointsByScoringPeriod") or {}).items()}

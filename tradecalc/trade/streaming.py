@@ -1,16 +1,20 @@
 """Streaming guide: which player to drop and which free agent to add (and on which day) to raise a
-team's chance of winning this week's matchup.
+team's chance of winning this week's matchup, without hurting the rest of its season.
 
-For a team and week, the planner tries moves "on day D, drop X and add free agent Y" (or just add
-Y if the roster has an open spot), and scores each with the same weekly model the app uses
-everywhere: daily lineups with fill-ins, the player's games left that week and his availability.
-The week is split at the move: days before D are played by the old roster, days from D on by the
-new one. Moves are chosen greedily (best first) up to the league's acquisition limit.
+For a team and week, the planner tries moves "on day D, drop X and add free agent Y" (or move an
+injured X to a free IR slot, or fill an open roster spot), and scores each with the same weekly model
+the app uses everywhere: daily lineups with fill-ins, games left that week and availability. The
+week is split at the move: days before D are played by the old roster, days from D on by the new one.
 
-Only bench-level players are considered for dropping (the lowest rest-of-season values on the
-roster), only players ESPN lists as free agents (not on waivers) are added, and every suggested move
-also reports what keeping it would do to the rest of the season, so a one-week rental is labelled
-as one.
+Every move is judged on its total effect on the team's expected wins, three parts:
+  this week       the change in this week's win chance
+  later weeks     keeping the move for the rest of the season (losing X, having Y)
+  rival pickup    X goes on waivers. If he would be the best player available there, a rival claims
+                  him: the one with the best waiver priority who would want him (he beats their
+                  weakest player). That rival is then stronger in every week you still play them.
+                  If free agents just as good as X are already available, nobody gains by claiming
+                  him and this part is zero.
+Moves are taken best first while the total is positive, up to the league's acquisition limit.
 """
 from __future__ import annotations
 
@@ -20,6 +24,17 @@ from datetime import date, timedelta
 import pandas as pd
 
 from tradecalc.trade.matchup import p_win, season_outlook, week_dist
+
+CLAIM_BAND = 0.10     # within +-5% of the best free agent's value, a claim is a coin flip
+
+
+@dataclass
+class Claim:
+    p: float                      # chance a rival claims the dropped player
+    team: int | None = None       # the rival who would get him
+    rank: int | None = None       # that rival's waiver priority (1 = first)
+    cost: float = 0.0             # p x change in your expected wins after this week
+    weeks: list = field(default_factory=list)   # remaining weeks (after this one) you play that rival
 
 
 @dataclass
@@ -34,6 +49,11 @@ class Move:
     out_games: int            # games the dropped player's team has from `day` on
     d_week: float = 0.0       # change in this week's win chance
     d_future: float = 0.0     # change in expected wins in later weeks if the move is kept
+    claim: Claim = field(default_factory=lambda: Claim(0.0))
+
+    @property
+    def total(self) -> float:
+        return self.d_week + self.d_future + self.claim.cost
 
 
 @dataclass
@@ -49,9 +69,16 @@ class StreamPlan:
     moves: list[Move] = field(default_factory=list)
     open_spots: int = 0
     free_ir: int = 0
-    future_d_wins: float = float("nan")   # keeping every move: change in expected wins after this week
-    options: list = field(default_factory=list)   # first move: the best alternatives (in case a player is taken)
-    protected: list = field(default_factory=list)  # low-value players kept because a rival would claim them
+    options: list = field(default_factory=list)      # first move: alternatives that also help (best first)
+    drop_costs: list = field(default_factory=list)   # first move: the best move dropping each bench player
+
+    @property
+    def d_future(self) -> float:
+        return sum(m.d_future for m in self.moves)
+
+    @property
+    def d_rival(self) -> float:
+        return sum(m.claim.cost for m in self.moves)
 
 
 def real_roster(state, team: int) -> list[int]:
@@ -129,10 +156,9 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
          n_add: int | None = None, min_gain: float = 3.0, n_eval: int = 12) -> StreamPlan:
     """Streaming plan for `team` in `week` (see module docstring).
 
-    Each step tries every (drop / IR / open spot, free agent, day) and keeps the n_eval moves that
-    add the most points this week; those are then scored by the total change in expected wins:
-    this week's win chance plus every later week if the move is kept. The best is taken if it
-    helps, up to max_moves moves."""
+    Each step tries every (drop / IR / open spot, free agent, day), keeps the moves that add the most
+    points this week (plus the best one for each bench player), scores them by total expected wins
+    and takes the best if it helps, up to max_moves moves."""
     cfg = state.cfg.get("streaming", {})
     max_moves = cfg.get("moves_per_week", 1) if max_moves is None else max_moves
     n_drop = n_drop or cfg.get("drop_candidates", 5)
@@ -140,6 +166,7 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
     shrink = state.cfg["model"].get("matchup_shrink", 1.0)
     start = max(state.today, week.start)
     opp = state.cal.opponents.get(team, {}).get(week.number)
+    P = state.players
 
     roster = real_roster(state, team)
     ir = [i for i in roster if i in set(state.ir.get(team, ()))]
@@ -155,35 +182,21 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
     def win(M, V):
         return None if opp is None else p_win(M + bank_me, V, M_opp, V_opp, shrink)
 
-    future = _future_fn(state, team, week, roster)
+    pool = available_free_agents(state)
+    later = _Later(state, team, week, roster)
+    claim = _claim_fn(state, team, week, pool, later)
     timeline = [(start, [i for i in roster if i not in ir])]          # players in IR slots can't play
     M0, V0 = timeline_dist(state, week, timeline)
     out = StreamPlan(team, week, opp, start, M0 + bank_me, M0 + bank_me, win(M0, V0), win(M0, V0),
-                     open_spots=open_spots, free_ir=free_ir, future_d_wins=0.0)
-    pool = available_free_agents(state)
+                     open_spots=open_spots, free_ir=free_ir)
     by_week = sorted(pool, key=lambda i: -week_points(state, i, week, start))[:n_add]
-    by_ros = sorted(pool, key=lambda i: -state.players[i].ros_value)[:10]
+    by_ros = sorted(pool, key=lambda i: -P[i].ros_value)[:10]
     adds_all = list(dict.fromkeys(by_week + by_ros))
-    # A dropped player goes to waivers. If he would be the best player available there (better per
-    # game, or more rest-of-season value, than every free agent left after this pickup), a rival
-    # claims him: you lose him for good and strengthen an opponent. Such players are kept. A player
-    # no better than what is already free costs nothing to drop: rivals could already add his equal.
-    P = state.players
-    top_mu = sorted(pool, key=lambda i: -P[i].mu)[:2]
-    top_ros = sorted(pool, key=lambda i: -P[i].ros_value)[:2]
-
-    def claimable(x, add=None) -> bool:
-        mu = next((P[i].mu for i in top_mu if i != add), float("-inf"))
-        ros = next((P[i].ros_value for i in top_ros if i != add), float("-inf"))
-        return P[x].mu > mu or P[x].ros_value > ros
-
-    by_value = sorted(timeline[0][1], key=lambda i: P[i].ros_value)
-    out.protected = [i for i in by_value[:n_drop] if claimable(i)]
     M_cur, V_cur, fut_cur = M0, V0, 0.0
     gone, spots, ir_left, to_ir = set(), open_spots, free_ir, []
-    for _ in range(max_moves):
+    for step in range(max_moves):
         last_day, cur = timeline[-1]
-        drops = [i for i in sorted(cur, key=lambda i: P[i].ros_value) if not claimable(i)][:n_drop]
+        drops = sorted(cur, key=lambda i: P[i].ros_value)[:n_drop]
         options = ([("open", None)] if spots > 0 else []) \
             + ([("ir", i) for i in cur if state.ir_eligible(i)] if ir_left > 0 else []) \
             + [("drop", i) for i in drops]
@@ -191,71 +204,110 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
         for add in adds_all:
             if add in cur or add in gone:
                 continue
-            p_add = state.players[add]
             for d in _days(week, last_day):
-                if not state.cal.team_plays(p_add.pro_team, d):
+                if not state.cal.team_plays(P[add].pro_team, d):
                     continue
                 for kind, x in options:
-                    if kind == "drop" and claimable(x, add):      # he'd be the best free agent once you add `add`
-                        continue
                     new = [i for i in cur if i != x] + [add]
                     tl = timeline + [(d, new)] if d > last_day else timeline[:-1] + [(d, new)]
                     M, V = timeline_dist(state, week, tl)
                     key = (kind, x, add)
                     if key not in cands or M > cands[key][2]:
                         cands[key] = (d, tl, M, V)
-        best = None
-        for (kind, x, add), (d, tl, M, V) in sorted(cands.items(), key=lambda kv: -kv[1][2])[:n_eval]:
-            if M - M_cur < min_gain:
-                continue
+        # score the moves that add the most points, and each bench player's best drop
+        ranked = sorted(cands.items(), key=lambda kv: -kv[1][2])
+        pick = dict(ranked[:n_eval])
+        for x in drops:
+            mine = [kv for kv in ranked if kv[0][0] == "drop" and kv[0][1] == x]
+            if mine:
+                pick.setdefault(*mine[0])
+        scored = []
+        for (kind, x, add), (d, tl, M, V) in pick.items():
             keeps = tl[-1][1] + ir + to_ir + ([x] if kind == "ir" else [])
-            fut = future(keeps)
-            d_week = 0.0 if opp is None else win(M, V) - win(M_cur, V_cur)
-            total = d_week + (fut - fut_cur)
-            if not out.moves and total > 0.005:
-                out.options.append(Move(d, kind, x, add, M - M_cur, win(M, V), _games(state, add, week, d),
-                                        _games(state, x, week, d) if x is not None else 0, d_week, fut - fut_cur))
-            if best is None or total > best[0]:
-                best = (total, d_week, fut, kind, x, add, d, tl, M, V)
-        if best is None or best[0] <= 0.005:
+            fut = later.delta(keeps)
+            m = Move(d, kind, x, add, M - M_cur, win(M, V), _games(state, add, week, d),
+                     _games(state, x, week, d) if x is not None else 0,
+                     0.0 if opp is None else win(M, V) - win(M_cur, V_cur), fut - fut_cur,
+                     claim(x, add, keeps) if kind == "drop" else Claim(0.0))
+            scored.append((m, tl, M, V, fut))
+        if step == 0:
+            out.options = sorted([m for m, *_ in scored if m.total > 0.005 and m.gain_pts >= min_gain],
+                                 key=lambda m: -m.total)
+            best_drop = {}
+            for m, *_ in scored:
+                if m.kind == "drop" and (m.out not in best_drop or m.total > best_drop[m.out].total):
+                    best_drop[m.out] = m
+            out.drop_costs = sorted(best_drop.values(), key=lambda m: -m.total)
+        good = [s for s in scored if s[0].gain_pts >= min_gain and s[0].total > 0.005]
+        if not good:
             break
-        total, d_week, fut, kind, x, add, d, tl, M, V = best
-        out.moves.append(Move(d, kind, x, add, M - M_cur, win(M, V), _games(state, add, week, d),
-                              _games(state, x, week, d) if x is not None else 0, d_week, fut - fut_cur))
+        m, tl, M, V, fut = max(good, key=lambda s: s[0].total)
+        out.moves.append(m)
         timeline, M_cur, V_cur, fut_cur = tl, M, V, fut
-        if kind == "open":
+        if m.kind == "open":
             spots -= 1
-        elif kind == "ir":
+        elif m.kind == "ir":
             ir_left -= 1
-            to_ir.append(x)
+            to_ir.append(m.out)
         else:
-            gone.add(x)
-    out.M_after, out.p_after, out.future_d_wins = M_cur + bank_me, win(M_cur, V_cur), fut_cur
-    out.options.sort(key=lambda m: -(m.d_week + m.d_future))
+            gone.add(m.out)
+    out.M_after, out.p_after = M_cur + bank_me, win(M_cur, V_cur)
     return out
 
 
-def _future_fn(state, team: int, week, roster: list[int]):
-    """keeps -> change in expected wins after this week vs keeping the current real roster.
-    Other teams' rosters are as the model sees them."""
-    nxt = week.end + timedelta(1)
-    if nxt > state.cal.weeks[-1].end:
-        return lambda keeps: 0.0
-    rosters = dict(state.rosters)
+class _Later:
+    """Your expected wins after this week for a given roster (and optionally a changed rival roster),
+    relative to keeping your current roster. Other teams as the model sees them."""
 
-    def e_wins(r):
-        rosters[team] = list(dict.fromkeys(r))
-        return season_outlook(team, rosters, state, nxt)["e_wins"]
+    def __init__(self, state, team: int, week, roster: list[int]):
+        self.state, self.team = state, team
+        self.nxt = week.end + timedelta(1)
+        self.done = self.nxt > state.cal.weeks[-1].end
+        self.memo = {}
+        self.base = 0.0 if self.done else self.e_wins(roster)
 
-    base = e_wins(roster)
-    memo = {}
+    def e_wins(self, keeps, rival: int | None = None, rival_roster=None) -> float:
+        if self.done:
+            return 0.0
+        key = (tuple(sorted(set(keeps))), rival, tuple(sorted(rival_roster)) if rival_roster else None)
+        if key not in self.memo:
+            rosters = dict(self.state.rosters)
+            rosters[self.team] = list(key[0])
+            if rival is not None:
+                rosters[rival] = list(rival_roster)
+            self.memo[key] = season_outlook(self.team, rosters, self.state, self.nxt)["e_wins"]
+        return self.memo[key]
 
-    def f(keeps):
-        k = tuple(sorted(set(keeps)))
-        if k not in memo:
-            memo[k] = e_wins(list(k)) - base
-        return memo[k]
-    return f
+    def delta(self, keeps) -> float:
+        return self.e_wins(keeps) - self.base
+
+
+def _claim_fn(state, team: int, week, pool: list[int], later: _Later):
+    """(dropped player, player added, roster you keep) -> Claim (see module docstring)."""
+    P = state.players
+    top = sorted(pool, key=lambda i: -P[i].ros_value)[:2]
+    teams = getattr(state.league, "teams", {})
+    rank = {t: getattr(teams.get(t), "waiver_rank", None) for t in state.rosters}
+    rivals = sorted((t for t in state.rosters if t != team), key=lambda t: (rank.get(t) or 99, t))
+    remaining = [w for w in state.cal.weeks if w.start > week.end]
+
+    def claim(x: int, add: int, keeps) -> Claim:
+        best = next((P[i].ros_value for i in top if i != add), 0.0)       # best free agent left
+        gap = (P[x].ros_value - best) / max(best, 1.0)
+        p = min(max(0.5 + gap / CLAIM_BAND, 0.0), 1.0)
+        if p <= 0:
+            return Claim(0.0)
+        for r in rivals:                                  # waiver order: first team that wants him
+            ir_r = set(state.ir.get(r, ()))
+            active = [i for i in state.rosters[r] if i not in ir_r]
+            weakest = min(active, key=lambda i: P[i].ros_value) if active else None
+            if weakest is None or P[x].ros_value > P[weakest].ros_value:
+                new_r = [i for i in state.rosters[r] if i != weakest] + [x]
+                cost = min(later.e_wins(keeps, r, new_r) - later.e_wins(keeps), 0.0)   # a stronger rival never helps
+                weeks = [w.number for w in remaining if state.cal.opponents.get(team, {}).get(w.number) == r]
+                return Claim(p, r, rank.get(r), p * cost, weeks)
+        return Claim(0.0)
+    return claim
 
 
 def describe(state, m: Move) -> str:
@@ -275,5 +327,5 @@ def league_summary(state, week, max_moves: int | None = None) -> pd.DataFrame:
         rows.append({"Team": state.team_name(t),
                      "Plan": "; ".join(f"{m.day:%a}: {describe(state, m)}" for m in pl.moves) or "no move helps",
                      "Extra pts": pl.M_after - pl.M_before, "Win chance now": pl.p_before, "With moves": pl.p_after,
-                     "Long-term (wins)": pl.future_d_wins})
+                     "Later weeks": pl.d_future, "Rival pickups": pl.d_rival})
     return pd.DataFrame(rows)

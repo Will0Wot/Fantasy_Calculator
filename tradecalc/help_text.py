@@ -377,16 +377,18 @@ weakest roster spot for the free agent who helps most *this week*.
 1. **Candidates.** Your {s.get('drop_candidates', 5)} least valuable players (rest of season) can be dropped, an injured
    player can move to an empty IR slot instead, and an open roster spot can simply be filled. Free agents are the
    best available by points this week and by long-term value; players on waivers are skipped.
-   **Nobody a rival would claim is ever dropped:** a dropped player goes on waivers, and if he's better (per game
-   or over the rest of the season) than every free agent left, another team will grab him, so you lose him for
-   good and a rival gets stronger. Only players no better than the best free agent are streamed; dropping them
-   costs nothing, since rivals could already add someone just as good.
+   **Dropping has a cost if someone else picks him up.** A dropped player goes on waivers. If he's better than
+   every free agent out there, a rival will claim him (the team with the best waiver priority who'd want him),
+   so you lose him for good and that rival is tougher in the weeks you still play them. The planner prices that
+   in (see step 4). If free agents just as good are already available, nobody gains by claiming him.
 2. **Every day of the week is tried.** Picking up on Wednesday keeps your dropped player's Monday and Tuesday
    games. A pickup plays the same day (lineups lock at each game's tip-off).
 3. **Scored like a matchup.** Each move is run through the same weekly model as the Matchup tab: daily lineups,
    bench players filling in, games left, injuries. That gives this week's new win chance.
-4. **Long-term check.** Each move is also judged on the rest of the season if you keep it, so the plan won't
-   drop a good player for a one-week rental. Moves are ranked by total expected wins: this week plus later weeks.
+4. **Total expected wins, three parts.** *This week* (the new win chance), *later weeks* (the rest of the season
+   with the free agent instead of the player you dropped), and *rival pickup* (a rival claiming your dropped
+   player and using him against you). A move is suggested only if the total is positive, so the plan won't drop a
+   good player for a one-week rental.
 5. **League limit.** ESPN allows {s.get('moves_per_week', 1)} pickup per matchup in this league; you can plan for more.
 
 **Good to know:** everyone sees the same free agents, so if your top choice gets picked up, use the next option

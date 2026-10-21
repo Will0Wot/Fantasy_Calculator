@@ -226,22 +226,37 @@ $$
 
 where $M(R, d)$ is the expected counted points of roster $R$ from day $d$ to the end of the week
 ($V$ likewise). This week's win chance follows §1.7, with points already scored added in. Candidates:
-the roster's 5 lowest rest-of-season values that a rival would not claim (plus IR / open-spot options) × the 30 free agents with the
+the roster's 5 lowest rest-of-season values (plus IR / open-spot options) × the 30 free agents with the
 most expected points this week plus the 10 best long-term (ESPN status FREEAGENT; waivers skipped)
 × every remaining day the free agent plays. The 12 moves adding the most points are then ranked by
 
 $$
-\Delta = \Delta P(\text{win } w) + \Delta\, \mathbb E[\text{wins after } w \mid \text{move kept}]
+\Delta = \Delta P(\text{win } w) + \Delta\, \mathbb E[\text{wins after } w \mid \text{move kept}] + C_{\text{claim}}
 $$
 
 and the best is taken if $\Delta > 0.005$; repeated up to the league's pickup limit (ESPN:
 1 per matchup). The second term stops one-week rentals that cost more later than they win now.
 
-**Waiver claims.** A dropped player $x$ goes on waivers. If, after the pickup of $y$, he would be the best
-player available ($\mu_x$ or his rest-of-season value above every remaining free agent's), a rival
-claims him: the drop is permanent and strengthens an opponent, so such players are never dropped. A
-player no better than the best free agent can be dropped at no further cost, since rivals could
-already add an equivalent player.
+**Waiver claims.** A dropped player $x$ goes on waivers, and a rival claims him if he would be the
+best player available. With $v$ = rest-of-season value and $v^\ast$ = the best free agent's value after
+the pickup of $y$, the claim probability is
+
+$$
+\pi(x) = \operatorname{clip}\!\Big(\tfrac12 + \frac{v_x - v^\ast}{0.10\, v^\ast},\; 0,\; 1\Big)
+$$
+
+(a coin flip within ±5% of the best free agent). The claimant is the rival with the best ESPN waiver
+priority whose weakest active player is worth less than $x$; he replaces that player. Then
+
+$$
+C_{\text{claim}} = \pi(x)\,\big(\mathbb E[\text{your wins after } w \mid \text{rival has } x] - \mathbb E[\text{your wins after } w]\big),
+$$
+
+which is non-zero only in the weeks you play that rival. A player no better than the best free agent
+has $\pi = 0$: rivals could already add an equivalent player. Example (week 1, 2026-27): dropping
+Kyrie Irving for the best pickup would add 3% this week but cost 0.27 wins later without him, and
+Bagchasers Anonymous (first on waivers, 68% claim chance) would gain him for your weeks 6 and 17
+(−0.03): total −0.27, so it is not suggested.
 
 ---
 

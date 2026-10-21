@@ -78,13 +78,33 @@ def test_injured_player_goes_to_ir_instead_of_dropping_someone():
     assert pl.moves and pl.moves[0].kind == "ir" and pl.moves[0].out == 1 and pl.moves[0].add == 500
 
 
-def test_never_drops_a_player_a_rival_would_claim():
-    # B scores 50 a game but is hurt and will miss most games: dropping him would add points this
-    # week, but he's far better than any free agent, so a rival would claim him
+def test_dropping_a_player_better_than_the_waiver_wire_counts_the_rival_who_claims_him():
+    # B scores 50 a game but is hurt now: dropping him adds points this week, but he's better than any
+    # free agent, so the rival with first waiver priority (team 2, our week-2 opponent) claims him
+    st = league(fa_week2_games=4, b_mu=50)
+    st.league.teams[2].waiver_rank = 1
+    b = st.players[10]
+    b.avail = type(b.avail)(0.3, out_games=3)
+    b.ros_value = 200.0                                  # above every free agent (fillers: 26 x 2 = 52)
+    weak = st.players[109]                              # team 2 has a weak player B would replace
+    weak.mu, weak.ros_value = 5.0, 5.0 * 14
+    pl = plan(st, 1, st.cal.weeks[0], max_moves=1)
+    m = next(m for m in pl.drop_costs if m.out == 10)
+    assert m.claim.p == 1.0 and m.claim.team == 2 and m.claim.weeks == [2] and m.claim.cost < 0
+    assert abs(m.total - (m.d_week + m.d_future + m.claim.cost)) < 1e-12   # the rival pickup lowers the total
+
+
+def test_nobody_claims_a_player_no_better_than_the_free_agents():
+    st = league(fa_week2_games=4, b_mu=18, b_week2_games=0)
+    m = plan(st, 1, st.cal.weeks[0], max_moves=1).moves[0]
+    assert m.out == 10 and m.claim.p == 0 and m.claim.cost == 0
+
+
+def test_no_claim_when_no_rival_would_want_him():
+    # same player, but every rival player is worth more than him: nobody would claim him
     st = league(fa_week2_games=4, b_mu=50)
     b = st.players[10]
     b.avail = type(b.avail)(0.3, out_games=3)
-    b.ros_value = b.mu * 0.3 * 2                        # lowest rest-of-season value on the roster
-    pl = plan(st, 1, st.cal.weeks[0], max_moves=1)
-    assert 10 in pl.protected
-    assert all(m.out != 10 for m in pl.moves + pl.options)
+    b.ros_value = 200.0
+    m = next(m for m in plan(st, 1, st.cal.weeks[0], max_moves=1).drop_costs if m.out == 10)
+    assert m.claim.team is None and m.claim.cost == 0
