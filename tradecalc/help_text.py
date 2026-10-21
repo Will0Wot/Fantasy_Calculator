@@ -377,6 +377,10 @@ weakest roster spot for the free agent who helps most *this week*.
 1. **Candidates.** Your {s.get('drop_candidates', 5)} least valuable players (rest of season) can be dropped, an injured
    player can move to an empty IR slot instead, and an open roster spot can simply be filled. Free agents are the
    best available by points this week and by long-term value; players on waivers are skipped.
+   **Nobody a rival would claim is ever dropped:** a dropped player goes on waivers, and if he's better (per game
+   or over the rest of the season) than every free agent left, another team will grab him, so you lose him for
+   good and a rival gets stronger. Only players no better than the best free agent are streamed; dropping them
+   costs nothing, since rivals could already add someone just as good.
 2. **Every day of the week is tried.** Picking up on Wednesday keeps your dropped player's Monday and Tuesday
    games. A pickup plays the same day (lineups lock at each game's tip-off).
 3. **Scored like a matchup.** Each move is run through the same weekly model as the Matchup tab: daily lineups,

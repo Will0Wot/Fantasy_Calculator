@@ -226,7 +226,7 @@ $$
 
 where $M(R, d)$ is the expected counted points of roster $R$ from day $d$ to the end of the week
 ($V$ likewise). This week's win chance follows §1.7, with points already scored added in. Candidates:
-the roster's 5 lowest rest-of-season values (plus IR / open-spot options) × the 30 free agents with the
+the roster's 5 lowest rest-of-season values that a rival would not claim (plus IR / open-spot options) × the 30 free agents with the
 most expected points this week plus the 10 best long-term (ESPN status FREEAGENT; waivers skipped)
 × every remaining day the free agent plays. The 12 moves adding the most points are then ranked by
 
@@ -236,6 +236,12 @@ $$
 
 and the best is taken if $\Delta > 0.005$; repeated up to the league's pickup limit (ESPN:
 1 per matchup). The second term stops one-week rentals that cost more later than they win now.
+
+**Waiver claims.** A dropped player $x$ goes on waivers. If, after the pickup of $y$, he would be the best
+player available ($\mu_x$ or his rest-of-season value above every remaining free agent's), a rival
+claims him: the drop is permanent and strengthens an opponent, so such players are never dropped. A
+player no better than the best free agent can be dropped at no further cost, since rivals could
+already add an equivalent player.
 
 ---
 

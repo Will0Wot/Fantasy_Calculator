@@ -51,6 +51,7 @@ class StreamPlan:
     free_ir: int = 0
     future_d_wins: float = float("nan")   # keeping every move: change in expected wins after this week
     options: list = field(default_factory=list)   # first move: the best alternatives (in case a player is taken)
+    protected: list = field(default_factory=list)  # low-value players kept because a rival would claim them
 
 
 def real_roster(state, team: int) -> list[int]:
@@ -163,11 +164,26 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
     by_week = sorted(pool, key=lambda i: -week_points(state, i, week, start))[:n_add]
     by_ros = sorted(pool, key=lambda i: -state.players[i].ros_value)[:10]
     adds_all = list(dict.fromkeys(by_week + by_ros))
+    # A dropped player goes to waivers. If he would be the best player available there (better per
+    # game, or more rest-of-season value, than every free agent left after this pickup), a rival
+    # claims him: you lose him for good and strengthen an opponent. Such players are kept. A player
+    # no better than what is already free costs nothing to drop: rivals could already add his equal.
+    P = state.players
+    top_mu = sorted(pool, key=lambda i: -P[i].mu)[:2]
+    top_ros = sorted(pool, key=lambda i: -P[i].ros_value)[:2]
+
+    def claimable(x, add=None) -> bool:
+        mu = next((P[i].mu for i in top_mu if i != add), float("-inf"))
+        ros = next((P[i].ros_value for i in top_ros if i != add), float("-inf"))
+        return P[x].mu > mu or P[x].ros_value > ros
+
+    by_value = sorted(timeline[0][1], key=lambda i: P[i].ros_value)
+    out.protected = [i for i in by_value[:n_drop] if claimable(i)]
     M_cur, V_cur, fut_cur = M0, V0, 0.0
     gone, spots, ir_left, to_ir = set(), open_spots, free_ir, []
     for _ in range(max_moves):
         last_day, cur = timeline[-1]
-        drops = sorted(cur, key=lambda i: state.players[i].ros_value)[:n_drop]
+        drops = [i for i in sorted(cur, key=lambda i: P[i].ros_value) if not claimable(i)][:n_drop]
         options = ([("open", None)] if spots > 0 else []) \
             + ([("ir", i) for i in cur if state.ir_eligible(i)] if ir_left > 0 else []) \
             + [("drop", i) for i in drops]
@@ -180,6 +196,8 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
                 if not state.cal.team_plays(p_add.pro_team, d):
                     continue
                 for kind, x in options:
+                    if kind == "drop" and claimable(x, add):      # he'd be the best free agent once you add `add`
+                        continue
                     new = [i for i in cur if i != x] + [add]
                     tl = timeline + [(d, new)] if d > last_day else timeline[:-1] + [(d, new)]
                     M, V = timeline_dist(state, week, tl)
@@ -194,7 +212,7 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
             fut = future(keeps)
             d_week = 0.0 if opp is None else win(M, V) - win(M_cur, V_cur)
             total = d_week + (fut - fut_cur)
-            if not out.moves:
+            if not out.moves and total > 0.005:
                 out.options.append(Move(d, kind, x, add, M - M_cur, win(M, V), _games(state, add, week, d),
                                         _games(state, x, week, d) if x is not None else 0, d_week, fut - fut_cur))
             if best is None or total > best[0]:

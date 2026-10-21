@@ -33,6 +33,10 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
     start = f"from {pl.start:%a %b %d}" if pl.start > week.start else "for the whole week"
     st.caption(f"Plan {start}{f' vs {opp}' if opp else ''}. Roster: {pl.open_spots} open spot(s), "
                f"{pl.free_ir} free IR slot(s).")
+    if pl.protected:
+        st.caption("🔒 Never dropped: " + ", ".join(P[i].name for i in pl.protected)
+                   + ". They're better than anyone on the waiver wire, so a rival would claim them (and you'd lose them "
+                     "for good). Only players no better than the best free agent are streamed.")
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Win chance this week", _pct(pl.p_after),
