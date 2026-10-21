@@ -34,7 +34,7 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
     st.caption(f"Plan {start}{f' vs {opp}' if opp else ''}. Roster: {pl.open_spots} open spot(s), "
                f"{pl.free_ir} free IR slot(s).")
     if pl.protected:
-        st.caption("🔒 Never dropped: " + ", ".join(P[i].name for i in pl.protected)
+        st.caption("🔒 Never dropped: " + ", ".join(P[i].name for i in pl.protected).rstrip(".")
                    + ". They're better than anyone on the waiver wire, so a rival would claim them (and you'd lose them "
                      "for good). Only players no better than the best free agent are streamed.")
 
