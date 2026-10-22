@@ -9,3 +9,4 @@ __pycache__/
 .pytest_cache/
 tradecalc/data/cache.sqlite
 tradecalc/data/injury_reports/raw/
+tradecalc/data/pbp/

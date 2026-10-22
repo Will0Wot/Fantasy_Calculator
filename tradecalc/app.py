@@ -344,7 +344,12 @@ with tab_sim:
         wk_n = c3.selectbox("Week", weeks_left, key="sim_wk", on_change=_sync_b)
         tb = c2.selectbox("Team B", [x for x in team_ids if x != ta], format_func=team_label.get, key="sim_b",
                           help="Defaults to Team A's scheduled opponent; pick any other team for a what-if.")
-        n_sims = c4.select_slider("Simulations", [1000, 5000, 10000, 25000], value=10000)
+        from tradecalc.sim import possession as _possession
+
+        _opts = [500, 1000, 2000, 5000] if _possession.enabled() else [1000, 5000, 10000, 25000]
+        n_sims = c4.select_slider("Simulations", _opts, value=_opts[2],
+                                  help="Each simulation plays every game of the week possession by possession."
+                                  if _possession.enabled() else None)
         if st.button("Run simulation", type="primary"):
             world, coaches_now = get_world(pretend or league_today().isoformat(), SH["nonce"])
             with st.spinner(f"Simulating {n_sims:,} weeks…"):
@@ -444,6 +449,66 @@ with tab_sim:
                     row["Left"] = r.games
                     grid.append(row)
             st.dataframe(pd.DataFrame(grid), hide_index=True, use_container_width=True)
+
+    # ---- one NBA game, possession by possession (RotoBot-style)
+    st.divider()
+    st.subheader("🏀 NBA game simulator")
+    st.caption("Pick any NBA game: it is played 5,000 times, possession by possession: who is on the floor, "
+               "who shoots and from where, who's guarding him, makes and misses, assists, rebounds, turnovers. "
+               "Below: the win probability, the score range, and the most typical of the 5,000 games.")
+    from tradecalc.teams import to_nba as _to_nba
+
+    upcoming = sorted({(g["date"], _to_nba(g["away"]), _to_nba(g["home"])) for g in state.league.pro_games
+                       if state.today <= g["date"] <= state.today + timedelta(days=13)})
+    if not upcoming:
+        st.info("No NBA games in the next two weeks.")
+    else:
+        pick = st.selectbox("Game", upcoming, format_func=lambda g: f"{g[0]:%a %b %d}: {g[1]} @ {g[2]}", key="gsim_game")
+        if st.button("Simulate this game", key="gsim_run"):
+            from tradecalc.sim import possession as _pos
+            from tradecalc.sim.engine import live_avail
+            from tradecalc.sim.possession.engine import game_detail
+
+            world, coaches_now = get_world(pretend or league_today().isoformat(), SH["nonce"])
+            model = world.possession or _pos.model_for(cfg["league"]["nba_season"], state.today.isoformat(),
+                                                       lambda k: None)
+            if model is None:
+                st.warning("No play-by-play data available for the possession simulator yet.")
+            else:
+                for t in (pick[1], pick[2]):                    # injured stars still listed on the roster
+                    world.rotation.setdefault(t, [])
+                with st.spinner(f"Playing {_pos.sims():,} games…"):
+                    gd = game_detail(world, pick[0], pick[2], pick[1], live_avail(world, state, coaches_now),
+                                     model, n=_pos.sims())
+                st.session_state.gsim = (pick, gd)
+        gs = st.session_state.get("gsim")
+        if gs and gs[0] == pick:
+            gd = gs[1]
+            h, a = gd.home, gd.away
+            _w = get_world(pretend or league_today().isoformat(), SH["nonce"])[0]
+            names = dict(zip(_w.players.index, _w.players["name"]))
+            sh_, sa_ = gd.score[h], gd.score[a]
+            g1, g2, g3 = st.columns(3)
+            g1.metric(f"{h} win probability", f"{(sh_ > sa_).mean():.0%}")
+            g2.metric("Projected score", f"{h} {np.median(sh_):.0f} – {np.median(sa_):.0f} {a}")
+            g3.metric("Total points (80% range)", f"{np.median(sh_ + sa_):.0f}",
+                      f"{np.quantile(sh_ + sa_, .1):.0f}–{np.quantile(sh_ + sa_, .9):.0f}", delta_color="off")
+            i = gd.typical()
+            st.markdown(f"**Most typical game** (simulation #{i + 1:,} of {gd.n:,}): "
+                        f"**{a} {gd.score[a][i]:.0f} @ {h} {gd.score[h][i]:.0f}**")
+            fmt_box = {"MIN": "{:.0f}", "PTS": "{:.0f}", "REB": "{:.0f}", "AST": "{:.0f}", "STL": "{:.0f}",
+                       "BLK": "{:.0f}", "TOV": "{:.0f}", "3PM": "{:.0f}", "FP": "{:.0f}"}
+            b1, b2 = st.columns(2)
+            b1.markdown(f"**{a}**")
+            b1.dataframe(gd.box(a, i, names).style.format(fmt_box), hide_index=True, use_container_width=True)
+            b2.markdown(f"**{h}**")
+            b2.dataframe(gd.box(h, i, names).style.format(fmt_box), hide_index=True, use_container_width=True)
+            with st.expander("Every player over all simulations (averages and fantasy-point range)"):
+                fmt_p = {"Plays": "{:.0%}", "MIN": "{:.1f}", "PTS": "{:.1f}", "REB": "{:.1f}", "AST": "{:.1f}",
+                         "FP": "{:.1f}", "FP 10%": "{:.0f}", "FP 90%": "{:.0f}"}
+                p1, p2 = st.columns(2)
+                p1.dataframe(gd.players(a, names).style.format(fmt_p), hide_index=True, use_container_width=True)
+                p2.dataframe(gd.players(h, names).style.format(fmt_p), hide_index=True, use_container_width=True)
 
 # ---------------------------------------------------------------------------- Trade builder
 with tab_build:
@@ -866,11 +931,12 @@ def _doc(name: str) -> str | None:
 
 with tab_audit:
     from tradecalc.audit import page as audit_page
-    from tradecalc.audit.suite import AUDIT_PATH, BASELINE_PATH
+    from tradecalc.audit.suite import AUDIT_PATH, BASELINE_PATH, BOX_PATH
     from tradecalc.audit.suite import load as load_audit
 
     st.header("Model audit")
-    audit_page.render(st, load_audit(AUDIT_PATH), load_audit(BASELINE_PATH), _doc("model_audit.md"))
+    audit_page.render(st, load_audit(AUDIT_PATH), load_audit(BASELINE_PATH), _doc("model_audit.md"),
+                      box=load_audit(BOX_PATH))
 
 # ---------------------------------------------------------------------------- Methodology
 with tab_method:

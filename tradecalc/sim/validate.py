@@ -16,8 +16,12 @@ from tradecalc.model.names import norm_name
 from tradecalc.sim.engine import build_world_history, simulate_games
 
 
-def _replay(H, params, asof: str, season: str, prev: str, n: int, seed: int = 1, days: int = 7):
+def _replay(H, params, asof: str, season: str, prev: str, n: int, seed: int = 1, days: int = 7, box: bool = False):
+    """box: simulate with the per-minute engine even when the possession engine is on (for fitting the
+    per-minute engine's own constants)."""
     W = build_world_history(H, params, asof, season, prev)
+    if box:
+        W.possession = None
     end = (date.fromisoformat(asof) + timedelta(days=days)).isoformat()
     tl = H.team_logs[(H.team_logs.game_date >= asof) & (H.team_logs.game_date < end) & H.team_logs.home]
     games = [(date.fromisoformat(d), h, a) for d, h, a in zip(tl.game_date, tl.team, tl.opp)]
@@ -35,7 +39,7 @@ def fit_calibration(H, params: dict, season: str, prev: str, mondays: list[str],
     shares, sums, fp_act, fp_sim, min_act = [], [], 0.0, 0.0, 0.0
     p = dict(params, rate_calibration=1.0)
     for m in mondays:
-        W, S, A, act = _replay(H, p, m, season, prev, n)
+        W, S, A, act = _replay(H, p, m, season, prev, n, box=True)     # per-minute engine constants
         rot = {k for ks in W.rotation.values() for k in ks}
         sums += [W.players.loc[ks, "exp_min"].sum() for ks in W.rotation.values()]
         tm = act.groupby(["game_id", "team"])["min"].sum()
@@ -52,12 +56,12 @@ def fit_calibration(H, params: dict, season: str, prev: str, mondays: list[str],
             "rate_calibration": round(float(fp_act / fp_sim), 4)}
 
 
-def coverage(H, params: dict, season: str, prev: str, mondays: list[str], n: int = 4000) -> dict:
+def coverage(H, params: dict, season: str, prev: str, mondays: list[str], n: int = 4000, box: bool = False) -> dict:
     """Per player-game: share of actual FP inside the simulated 50% / 80% intervals, and bias.
-    Per player-week: same for weekly totals (sum over the week's games)."""
+    Per player-week: same for weekly totals (sum over the week's games). box: per-minute engine."""
     rows = []
     for m in mondays:
-        W, S, A, _ = _replay(H, params, m, season, prev, n)
+        W, S, A, _ = _replay(H, params, m, season, prev, n, box=box)
         for (k, d), fp in S.fp.items():
             if (k, d) in A.index and S.played[(k, d)].all():
                 q = np.quantile(fp, [0.1, 0.25, 0.5, 0.75, 0.9])
@@ -118,7 +122,8 @@ def history_avail(H, W, params, asof: str, season: str):
 
 
 def matchup_calibration(H, params: dict, season: str, prev: str, mondays: list[str], matchups_per_week: int = 40,
-                        roster_size: int = 13, pool_size: int = 200, n: int = 2000, seed: int = 7, slots_cfg=None):
+                        roster_size: int = 13, pool_size: int = 200, n: int = 2000, seed: int = 7, slots_cfg=None,
+                        rho: float | None = None):
     """Random fantasy matchups on past weeks: predicted P(win) vs what actually happened.
 
     Rosters: random draws from the top `pool_size` players by expected FP as of the Monday.
@@ -127,6 +132,10 @@ def matchup_calibration(H, params: dict, season: str, prev: str, mondays: list[s
     from tradecalc.sim.engine import fantasy_week
     from tradecalc.trade.lineup import best_lineup, eligibility_matrix
 
+    from tradecalc.config import load_config
+
+    if rho is None:  # backtests have no injury report, so known injuries also persist through the week
+        rho = float(load_config().get("engine", {}).get("absence_rho_backtest", 0.0))
     rng = np.random.default_rng(seed)
     POS = {"G": ("PG", "SG"), "F": ("SF", "PF"), "C": ("C",)}
     slots, slot_elig = slots_cfg
@@ -139,7 +148,7 @@ def matchup_calibration(H, params: dict, season: str, prev: str, mondays: list[s
         end = (start + timedelta(days=7)).isoformat()
         tl = H.team_logs[(H.team_logs.game_date >= m) & (H.team_logs.game_date < end) & H.team_logs.home]
         games = [(date.fromisoformat(d), h, a) for d, h, a in zip(tl.game_date, tl.team, tl.opp)]
-        S = simulate_games(W, games, avail, n=n, seed=int(rng.integers(1 << 30)))
+        S = simulate_games(W, games, avail, n=n, seed=int(rng.integers(1 << 30)), rho=rho)
         act = H.logs[(H.logs.game_date >= m) & (H.logs.game_date < end)].copy()
         act["key"] = act.player_name.map(norm_name)
         act["d"] = act.game_date.map(date.fromisoformat)

@@ -85,7 +85,8 @@ model:
     in_intercept: 0.524         # in-season: ~38% of a player's deviation from average carries forward
     in_slope: 0.378             # (a logit + minutes form, in_logit: [c0, c1, c2], was tested: see docs/model_audit.md)
     prior_games: 10
-  matchup_shrink: 0.745         # projected gaps regress toward the middle: probit fit on 2022-23..2025-26 (audit, rolling origin)
+  matchup_shrink: 0.778         # projected gaps regress toward the middle: probit fit on 2022-23..2025-26 (audit, rolling origin,
+                                # with per-game projections; 0.745 without)
   proj_uncertainty: 0.3         # a player's true level is uncertain (shared by his games in a week)
   absence_cluster: 2.0          # missed games come in clusters, not one at a time (fitted on 2022-23)
   espn_anchor: {weight: 0.0, games: 10}   # engine: pull FPPG toward ESPN's projection; audit: any weight > 0 ranked teams worse
@@ -112,6 +113,18 @@ trade:
   monte_carlo_sims: 10000
   top_n_per_opponent: 5
   finder_min_gain: 0.10        # finder only lists trades gaining at least this many wins (= ACCEPT)
+
+engine:
+  mode: possession            # possession: RotoBot-style possession-by-possession games (sim/possession/)
+                              # box: per-minute stat rates (sim/engine.py). Chosen by the backtest (docs/model_audit.md)
+  sims: 5000                  # simulations per game for single-game views
+  game_weight: 0.5            # each game's projection = 50% season-long estimate + 50% that game's simulation
+                              # (the 50/50 average beat either alone on every test season: docs/model_audit.md)
+  game_sims: 300              # simulations per game for the daily rest-of-season run (tradecalc possession)
+  absence_rho: 0.59           # weekly matchups: a player's absences persist within the week (correlation
+                              # between his games' play/miss draws), measured on players not on Monday's
+                              # official injury report, 2022-23 and 2023-24 (docs/model_audit.md)
+  absence_rho_backtest: 0.85  # the same measured with no injury report at all, as backtests have none
 
 streaming:
   moves_per_week: 1           # ESPN matchupAcquisitionLimit = 1 (adds per matchup); raise if your league allows more

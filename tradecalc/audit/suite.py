@@ -97,6 +97,54 @@ def test_engine_ranges(H, params, season) -> dict:
     return coverage(H, params, season, prev_season(season), mondays, n=2000)
 
 
+def test_engine_sims(H, params, season, n: int = 600, every: int = 3) -> dict:
+    """Both simulators on the same player-games: every `every`-th Monday of the season, simulate the
+    week's games with the box engine and the possession engine (each built only from data before
+    that Monday) and compare each player's simulated fantasy points with what he really scored."""
+    from datetime import date, timedelta
+
+    from tradecalc.sim import possession
+    from tradecalc.sim.engine import build_world_history, simulate_games
+    from tradecalc.sim.validate import history_avail
+
+    prev = prev_season(season)
+    tl = H.team_logs[H.team_logs.season == season]
+    mondays = [d for d in sorted(tl.game_date.unique()) if pd.Timestamp(d).weekday() == 0][2::every]
+    rows = []
+    for asof in mondays:
+        W = build_world_history(H, params, asof, season, prev)
+        pm = W.possession or possession.model_for(season, asof, H.pos_of, prev)
+        end = (date.fromisoformat(asof) + timedelta(6)).isoformat()
+        g = tl[(tl.game_date >= asof) & (tl.game_date <= end) & tl.home]
+        games = [(date.fromisoformat(d), h, a) for d, h, a in zip(g.game_date, g.team, g.opp)]
+        avail = history_avail(H, W, params, asof, season)
+        W.possession = None
+        Sb = simulate_games(W, games, avail, n=n, seed=1)
+        W.possession = pm
+        Sp = simulate_games(W, games, avail, n=n, seed=1)
+        L = H.logs[(H.logs.season == season) & (H.logs.game_date >= asof) & (H.logs.game_date <= end)]
+        for name, d, fp, mins in zip(L.player_name, L.game_date, L.fp, L["min"]):
+            k, dd = norm_name(name), date.fromisoformat(d)
+            if mins <= 0 or (k, dd) not in Sb.fp or (k, dd) not in Sp.fp:
+                continue
+            row = {"actual": fp}
+            for lab, S in (("box", Sb), ("possession", Sp)):
+                x = S.fp[(k, dd)][S.played[(k, dd)]]
+                if len(x) < 20:
+                    break
+                row[lab], row[f"{lab}_lo"], row[f"{lab}_hi"] = x.mean(), np.quantile(x, .1), np.quantile(x, .9)
+            else:
+                rows.append(row)
+    C = pd.DataFrame(rows)
+    out = {"n": int(len(C)), "weeks": len(mondays)}
+    for lab in ("box", "possession"):
+        e = C[lab] - C.actual
+        out[lab] = {"MAE": float(e.abs().mean()), "RMSE": float(np.sqrt((e ** 2).mean())), "bias": float(e.mean()),
+                    "corr": float(np.corrcoef(C[lab], C.actual)[0, 1]),
+                    "in80": float(((C.actual >= C[f"{lab}_lo"]) & (C.actual <= C[f"{lab}_hi"])).mean())}
+    return out
+
+
 # 4. availability ---------------------------------------------------------------------------
 
 def test_availability(H, params, season) -> dict:
@@ -244,8 +292,11 @@ def run_audit(conn, cfg, client, seasons=TEST_SEASONS, H=None, log=print, quick=
     if rolling_shrink:
         for s in FIT_ONLY_SEASONS:
             log(f"== {s} (fit only: matchup shrink) ==")
+            from tradecalc.sim.params import load_params
+
+            # no earlier seasons to fit the engine on here: the saved engine parameters drive the simulations
             seen.append(run_season_model_tests(H, client, cfg, s, n_leagues=3 if quick else 5, trade_checkpoints=(),
-                                               log=lambda m: None)["matchups"])
+                                               log=lambda m: None, params=load_params())["matchups"])
         report["matchup_shrink"] = {}
     for s in seasons:
         t0 = time.time()
@@ -258,6 +309,7 @@ def run_audit(conn, cfg, client, seasons=TEST_SEASONS, H=None, log=print, quick=
         log("  season model: rest-of-season FPPG"); r["season_fppg"] = test_season_model_fppg(H, ctx)
         log("  engine: point projections"); r["engine_points"] = test_engine_points(H, params, s)
         log("  engine: ranges"); r["engine_ranges"] = test_engine_ranges(H, params, s)
+        log("  engine: box vs possession simulations"); r["engine_sims"] = test_engine_sims(H, params, s)
         log("  availability"); r["availability"] = test_availability(H, params, s)
         log("  engine: weekly matchups")
         em = test_engine_matchups(H, params, cfg, s, per_week=20 if quick else 40)
@@ -271,7 +323,7 @@ def run_audit(conn, cfg, client, seasons=TEST_SEASONS, H=None, log=print, quick=
             cfg_s = _with_shrink(cfg, beta)
             log(f"    matchup shrink fitted on earlier seasons: {beta:.3f}")
         smt = run_season_model_tests(H, client, cfg_s, s, n_leagues=3 if quick else 5, n_trades=25 if quick else 40,
-                                     log=lambda m: None)
+                                     log=lambda m: None, params=params)
         seen.append(smt["matchups"])
         r["season_model"] = summarize_season_model(smt)
         log("  league forecast")
@@ -287,6 +339,7 @@ def run_audit(conn, cfg, client, seasons=TEST_SEASONS, H=None, log=print, quick=
 
 AUDIT_PATH = Path(__file__).resolve().parents[1] / "config" / "audit.json"
 BASELINE_PATH = Path(__file__).resolve().parents[1] / "config" / "audit_baseline.json"
+BOX_PATH = Path(__file__).resolve().parents[1] / "config" / "audit_box.json"   # same code, old per-minute engine
 
 
 def baseline_config(cfg):

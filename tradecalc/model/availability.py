@@ -16,6 +16,12 @@ import pandas as pd
 OUT_STATUSES = {"OUT", "INJURY_RESERVE", "SUSPENSION", "FIFTEEN_DAY_DL", "SIXTY_DAY_DL",
                 "SEVEN_DAY_DL", "TEN_DAY_DL", "OUT_FOR_SEASON"}
 DTD_STATUSES = {"DAY_TO_DAY", "QUESTIONABLE", "DOUBTFUL", "GTD"}
+# Not on the injury report now: his next games are much safer than his season-long rate says (rest days
+# and new injuries show up on the report first). On the NBA's official reports 2022-23 to 2025-26,
+# rotation players not listed for their team's next game played it 92% of the time (season rate: 79%),
+# back-to-back or not. P(miss) of the j-th upcoming game is scaled by 1 - (1 - 0.37) * 0.65^j: 0.37 for
+# the next game, then 0.59, 0.73, 0.83, 0.89, 0.93 ... -> the season rate after about six games.
+HEALTHY_MISS0, HEALTHY_DECAY = 0.37, 0.65
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,7 @@ class Availability:
     rtp: float = 1.0                # P(returns this season at all): ceiling on P(back)
     # (from, to, multiplier) date windows, e.g. post-injury ramp-up or reinjury risk
     modifiers: tuple = ()
+    healthy_now: bool = False       # not on the injury report: near-term games get the healthy uplift
 
     def p_back(self, d: date | None) -> float:
         if self.back_by is None or d is None:
@@ -48,15 +55,19 @@ class Availability:
                     m *= mult
         return m
 
-    def for_game(self, j: int, d: date | None = None) -> float:
-        """Probability of playing the j-th upcoming team game (0 = next game), on date d."""
+    def for_game(self, j: int, d: date | None = None, rest: float = 1.0) -> float:
+        """Probability of playing the j-th upcoming team game (0 = next game), on date d.
+        rest: back-to-back rest factor (engine); for a player not on the injury report it is scaled
+        down with the rest of his miss risk, since rest days are reported too."""
         if self.out_for_season or j < self.out_games:
             return 0.0
-        p = self.base * self.p_back(d) * self.modifier(d)
+        p = min(self.base * self.p_back(d) * self.modifier(d) * rest, 1.0)
         if self.dtd_next is not None:
             in_dtd = (d < self.dtd_until) if (self.dtd_until and d) else j == self.out_games
             if in_dtd:
                 p = min(p, self.dtd_next)
+        if self.healthy_now:
+            p = 1 - (1 - p) * (1 - (1 - HEALTHY_MISS0) * HEALTHY_DECAY ** max(j, 0))
         return min(p, 1.0)
 
     @property
@@ -106,12 +117,14 @@ def availability(
     rtp: float = 1.0,
     typical_days: int | None = None,
     modifiers: tuple = (),
+    healthy_now: bool = False,
 ) -> Availability:
     """Availability for one player.
 
     Precedence for OUT players: explicit games_until_return (manual override) >
     return_date (ESPN injury report) > typical_days for the injury type > out_default_games.
-    rtp and modifiers come from the injury profile (model/injury.py).
+    rtp and modifiers come from the injury profile (model/injury.py). healthy_now: the status comes
+    from a current injury report, so a player without one is known to be healthy today.
     """
     from datetime import timedelta
 
@@ -134,7 +147,7 @@ def availability(
     if status in DTD_STATUSES:
         until = return_date if return_date and today and return_date > today else None
         return Availability(base, dtd_next=dtd_prob, dtd_until=until, modifiers=modifiers)
-    return Availability(base, modifiers=modifiers)
+    return Availability(base, modifiers=modifiers, healthy_now=healthy_now)
 
 
 def in_season_calibration(rate: float, cal: dict, minutes: float | None = None) -> float:

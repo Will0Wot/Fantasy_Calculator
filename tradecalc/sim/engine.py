@@ -48,6 +48,8 @@ class World:
     params: dict
     scoring: dict
     b2b_days: dict[str, set] = field(default_factory=dict)  # team -> dates that are 2nd night of a B2B
+    possession: object = None             # sim.possession PossessionModel: when set, games are simulated
+                                          # possession by possession (sim/possession/engine.py)
 
 
 # --- building a world ---------------------------------------------------------------------
@@ -88,7 +90,7 @@ def build_world_history(H, params: dict, asof: str, season: str, prev: str) -> W
         team = g["team"].iat[-1]
         tg = tl_cur[tl_cur.team == team]["game_date"].sort_values().tail(10)
         recent = g[g.game_date.isin(set(tg))]
-        if len(recent) < 3:
+        if len(recent) < min(3, max(1, len(tg) - 1)):          # opening days: teams with < 4 games
             continue
         key = norm_name(g["player_name"].iat[-1])
         exp_min = _ewma(g[g.team == team]["min"]) if (g.team == team).sum() >= 2 else _ewma(g["min"])
@@ -111,7 +113,16 @@ def build_world_history(H, params: dict, asof: str, season: str, prev: str) -> W
     w = World(date.fromisoformat(asof), P, dict(rotation), dm, _team_strength(tl_cur if len(tl_cur) >= 60 else tl_prev),
               impact, params, H.scoring)
     w.b2b_days = _b2b_days_from_logs(tl[tl.season == season])
+    attach_possession(w, season, asof, prev, H.pos_of)
     return w
+
+
+def attach_possession(w: World, season: str, asof: str | None, prev: str, pos_of) -> None:
+    """Use the possession-level simulator for this world when the config says so (engine.mode)."""
+    from tradecalc.sim import possession
+
+    if possession.enabled():
+        w.possession = possession.model_for(season, asof, pos_of, prev)
 
 
 def _b2b_days_from_logs(tl) -> dict[str, set]:
@@ -163,12 +174,40 @@ def _nb(rng, mean, r, n):
     return rng.negative_binomial(r, p)
 
 
+def absence_weeks(rng, n: int, rho: float):
+    """Who-plays draws for one simulated week: returns played(keys, p) -> n x len(keys) bool.
+    With rho > 0 a player's games share a weekly normal component (Gaussian copula, correlation rho
+    between any two of his games), so absences persist within the week as real ones do: a player
+    who misses Monday is more likely to miss Wednesday. rho = 0: independent games."""
+    from scipy.special import ndtri
+
+    week: dict[str, np.ndarray] = {}
+
+    def played(keys, p):
+        p = np.asarray(p, dtype=float)
+        if rho <= 0:
+            return rng.random((n, len(keys))) < p[None, :]
+        for k in keys:
+            if k not in week:
+                week[k] = rng.standard_normal(n)
+        wz = np.stack([week[k] for k in keys], axis=1) if keys else np.zeros((n, 0))
+        z = np.sqrt(rho) * wz + np.sqrt(1 - rho) * rng.standard_normal((n, len(keys)))
+        return z < ndtri(np.clip(p, 1e-12, 1 - 1e-12))[None, :]
+    return played
+
+
 def simulate_games(world: World, games: list[tuple[date, str, str]], avail, n: int = 10000,
-                   seed: int | None = 0, interest: set[str] | None = None) -> GameSims:
+                   seed: int | None = 0, interest: set[str] | None = None, rho: float = 0.0) -> GameSims:
     """games: (date, home NBA team, away NBA team). avail(key, team, date) -> P(plays).
-    interest: keys to return samples for (default: everyone simulated)."""
+    interest: keys to return samples for (default: everyone simulated).
+    rho: within-week persistence of absences (absence_weeks); 0 = independent games."""
+    if getattr(world, "possession", None) is not None:
+        from tradecalc.sim.possession.engine import simulate_games as possession_games
+
+        return possession_games(world, games, avail, world.possession, n=n, seed=seed, interest=interest, rho=rho)
     rng = np.random.default_rng(seed)
     pr, P = world.params, world.players
+    played_draw = absence_weeks(rng, n, rho)
     # Weekly form / rate-estimate error: one multiplier per player per simulation, shared by all
     # of his games in this call, so a player's games within a week are correlated.
     form_sd = pr.get("form_sd", 0.0)
@@ -196,7 +235,7 @@ def simulate_games(world: World, games: list[tuple[date, str, str]], avail, n: i
             keys = [k for k in world.rotation.get(t, []) if k in P.index]
             sub = P.loc[keys]
             p = np.array([avail(k, t, d) for k in keys])
-            plays[t] = rng.random((n, len(keys))) < p[None, :]
+            plays[t] = played_draw(keys, p)
             info[t] = (keys, sub)
         for t in teams:
             o = away if t == home else home
@@ -214,8 +253,6 @@ def simulate_games(world: World, games: list[tuple[date, str, str]], avail, n: i
                 tot = wts.sum()
                 miss[s] = (absent * wts[None, :]).sum(axis=1) / tot if tot > 0 else np.zeros(n)
             pos = sub["pos"].to_numpy()
-            abs_by_pos = {g: (absent[:, pos == g] * em[pos == g][None, :]).sum(axis=1) for g in ("G", "F", "C")}
-            abs_total = sum(abs_by_pos.values())
             # opponent's absent defenders -> efficiency multiplier
             okeys, osub = info[o]
             if okeys:
@@ -226,20 +263,7 @@ def simulate_games(world: World, games: list[tuple[date, str, str]], avail, n: i
             def_f = dm.factors.loc[o].to_dict() if o in dm.factors.index else {}
             pace_ratio = game_pace / exp_pace[t] * pace_shock
             b2b = d in world.b2b_days.get(t, set())
-            # minutes for every rotation player, then scale so the team plays ~240 minutes
-            M = np.zeros((n, len(keys)))
-            for j in range(len(keys)):
-                g_ = pos[j]
-                same, other = abs_by_pos[g_], abs_total - abs_by_pos[g_]
-                mhat = (em[j] + mp["const"] + mp["abs_min_same"] * same + mp["abs_min_other"] * other + mp["b2b"] * b2b)
-                if em[j] >= 30:
-                    mhat = mhat + mp["blow_star"] * blow
-                elif em[j] < 20:
-                    mhat = mhat + mp["blow_bench"] * blow
-                M[:, j] = np.clip(rng.normal(mhat, minutes_sd(em[j], mp)), 0, 48) * pl[:, j]
-            target = pr.get("team_minutes", 241.0) * pr.get("rotation_minutes_share", 0.97)
-            tot = M.sum(axis=1, keepdims=True)
-            M = np.clip(M * np.where(tot > 0, target / np.maximum(tot, 1e-9), 0), 0, 48)
+            M = draw_minutes(em, pos, pl, b2b, blow, pr, rng, n)
             rate_cal = pr.get("rate_calibration", 1.0)
             for j, k in enumerate(keys):
                 if interest is not None and k not in interest:
@@ -254,6 +278,30 @@ def simulate_games(world: World, games: list[tuple[date, str, str]], avail, n: i
                 box_out[(k, d)] = {s: float(box[s][m].mean()) if m.any() else 0.0 for s in BOX}
                 box_out[(k, d)]["fp"] = float(fp[m].mean()) if m.any() else 0.0
     return GameSims(fp_out, played_out, box_out)
+
+
+def draw_minutes(em: np.ndarray, pos: np.ndarray, pl: np.ndarray, b2b: bool, blow: np.ndarray, pr: dict,
+                 rng, n: int) -> np.ndarray:
+    """Minutes for every rotation player in every simulation (n x players): expected minutes plus
+    the fitted effects of absent teammates (same / other position group), back-to-backs and
+    blowouts, with noise; players who sit get 0; then the team is scaled to ~240 minutes."""
+    mp = pr["minutes"]
+    absent = ~pl
+    abs_by_pos = {g: (absent[:, pos == g] * em[pos == g][None, :]).sum(axis=1) for g in ("G", "F", "C")}
+    abs_total = sum(abs_by_pos.values())
+    M = np.zeros((n, len(em)))
+    for j in range(len(em)):
+        g_ = pos[j]
+        same, other = abs_by_pos[g_], abs_total - abs_by_pos[g_]
+        mhat = (em[j] + mp["const"] + mp["abs_min_same"] * same + mp["abs_min_other"] * other + mp["b2b"] * b2b)
+        if em[j] >= 30:
+            mhat = mhat + mp["blow_star"] * blow
+        elif em[j] < 20:
+            mhat = mhat + mp["blow_bench"] * blow
+        M[:, j] = np.clip(rng.normal(mhat, minutes_sd(em[j], mp)), 0, 48) * pl[:, j]
+    target = pr.get("team_minutes", 241.0) * pr.get("rotation_minutes_share", 0.97)
+    tot = M.sum(axis=1, keepdims=True)
+    return np.clip(M * np.where(tot > 0, target / np.maximum(tot, 1e-9), 0), 0, 48)
 
 
 def trim_rotation(exp_min: np.ndarray, total: float) -> np.ndarray:
@@ -522,6 +570,7 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
         for t in (g_["home"], g_["away"]):
             by_team[to_nba(t)].add(g_["date"])
     w.b2b_days = {t: {b for a, b in zip(sorted(ds), sorted(ds)[1:]) if (b - a).days == 1} for t, ds in by_team.items()}
+    attach_possession(w, season, state.today.isoformat(), prev, lambda k: H.pos_of(k))
     return w
 
 
@@ -532,16 +581,21 @@ def live_avail(world: World, state, coaches_now: dict[str, str] | None = None):
 
     def avail(k, team, d):
         row = world.players.loc[k] if k in world.players.index else None
-        base = 0.85
-        if row is not None and row.get("espn_id") in by_espn:
-            ps = by_espn[row["espn_id"]]
-            base = state.a_for(ps, d) if state.cal.team_plays(ps.pro_team, d) else ps.avail.for_game(0, d)
         b2b = d in world.b2b_days.get(team, set())
         coach = (coaches_now or {}).get(team)
         crate = cpar.get(coach, {}).get("b2b_rest") if coach else None
         age = row["age"] if row is not None else 26.0
         em = row["exp_min"] if row is not None else 15.0
-        return float(np.clip(base * rest_factor(world.params, age, em, b2b, crate), 0, 1))
+        rf = rest_factor(world.params, age, em, b2b, crate)
+        if row is not None and row.get("espn_id") in by_espn:
+            ps = by_espn[row["espn_id"]]
+            j = 0
+            if state.cal.team_plays(ps.pro_team, d):
+                j = state.team_game_index.get(ps.pro_team, {}).get(d)
+                if j is None:
+                    return 0.0
+            return float(np.clip(ps.avail.for_game(j, d, rest=rf), 0, 1))
+        return float(np.clip(0.85 * rf, 0, 1))
     return avail
 
 
@@ -574,7 +628,11 @@ def run_matchup(world: World, state, team_a: int, team_b: int, week, n: int = 10
         t = world.players.loc[k, "team"]
         if k not in world.rotation.get(t, []):
             world.rotation.setdefault(t, []).append(k)
-    sims = simulate_games(world, games, live_avail(world, state, coaches_now), n=n, seed=seed, interest=set(elig))
+    involved = {world.players.loc[k, "team"] for k in elig}              # only games with rostered players
+    games = [g for g in games if g[1] in involved or g[2] in involved]
+    rho = float(cfg.get("engine", {}).get("absence_rho", 0.0))       # absences persist within the week
+    sims = simulate_games(world, games, live_avail(world, state, coaches_now), n=n, seed=seed, interest=set(elig),
+                          rho=rho)
     res = fantasy_week(sims, rosters, days, slot_list(cfg), elig, cfg["roster"]["slot_eligibility"], n,
                        cfg["league"]["tie_value"], names, teams_of)
     # Days already played this week: add each team's actual points, then re-score the matchup.

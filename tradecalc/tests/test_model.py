@@ -91,3 +91,13 @@ def test_in_season_calibration_forms():
     assert 0 < a_lo < a_hi < 1                                                     # monotone in the rate
     assert in_season_calibration(0.9, lg, minutes=34) > in_season_calibration(0.9, lg, minutes=14)  # starters play more
     assert calibrated_rate(0.9, 0, 0, lg) == calibrated_rate(0.9, 0, 0, lin)       # preseason form unchanged
+
+
+def test_healthy_player_off_the_injury_report_likely_plays_his_next_game():
+    av = availability("ACTIVE", 0.8, cap=0.95, dtd_prob=0.5, out_default_games=10, healthy_now=True)
+    assert av.for_game(0) == pytest.approx(1 - 0.2 * 0.37)                 # next game: 93%, not 80%
+    assert av.for_game(1) == pytest.approx(1 - 0.2 * (1 - 0.63 * 0.65))
+    assert abs(av.for_game(30) - 0.8) < 1e-6                                # fades to the season rate
+    assert av.for_game(0, rest=0.9) == pytest.approx(1 - 0.28 * 0.37)       # rest days are reported too
+    # without a current injury report (backtests) nothing changes
+    assert availability("ACTIVE", 0.8, cap=0.95, dtd_prob=0.5, out_default_games=10).for_game(0) == 0.8

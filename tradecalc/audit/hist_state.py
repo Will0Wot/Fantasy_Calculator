@@ -174,8 +174,38 @@ def player_table(ctx: SeasonCtx, cfg, today: date, rostered: dict) -> pd.DataFra
     return pd.DataFrame(rows, columns=["key", "team", "mu", "n", "sd", "base", "owner", "streak"])
 
 
-def hist_state(ctx: SeasonCtx, cfg, league: list[list[str]], checkpoint: int, fa_pool: int = 250) -> tuple:
-    """(LeagueState, key->id, id->key) as of the start of week `checkpoint`."""
+def rest_of_season_sims(H, ctx: SeasonCtx, params: dict, checkpoint: int, n: int = 300) -> pd.DataFrame | None:
+    """What the live daily run would have saved at this checkpoint: possession simulations of every
+    game left in the season (sim/possession/forecast.py), built only from what was known then.
+    None unless the possession engine is on."""
+    from tradecalc.sim import possession
+    from tradecalc.sim.engine import build_world_history
+    from tradecalc.sim.forecast_test import _avail_fn, build_world_preseason
+    from tradecalc.sim.possession.forecast import simulate_rest
+    from tradecalc.sim.validate import history_avail
+
+    if not possession.enabled():
+        return None
+    season, prev = ctx.season, prev_season(ctx.season)
+    asof = ctx.weeks[checkpoint].start.isoformat()
+    if checkpoint == 0:
+        W = build_world_preseason(H, params, season, prev, ctx.values)
+        av = _avail_fn(H, W, params, asof, season, prev)
+    else:
+        W = build_world_history(H, params, asof, season, prev)
+        av = history_avail(H, W, params, asof, season)
+    if W.possession is None:
+        return None
+    tl = H.team_logs[(H.team_logs.season == season) & H.team_logs.home & (H.team_logs.game_date >= asof)]
+    games = [(date.fromisoformat(d_), h, a) for d_, h, a in zip(tl.game_date, tl.team, tl.opp)]
+    weeks = [[g for g in games if w.start <= g[0] <= w.end] for w in ctx.weeks[checkpoint:]]
+    return simulate_rest(W, weeks, av, n=n)
+
+
+def hist_state(ctx: SeasonCtx, cfg, league: list[list[str]], checkpoint: int, fa_pool: int = 250,
+               proj: pd.DataFrame | None = None) -> tuple:
+    """(LeagueState, key->id, id->key) as of the start of week `checkpoint`. proj: per-game
+    simulations (rest_of_season_sims) to project each game as the live model does."""
     m = cfg["model"]
     today = ctx.weeks[checkpoint].start
     rostered = {k: t + 1 for t, team in enumerate(league) for k in team}
@@ -194,6 +224,14 @@ def hist_state(ctx: SeasonCtx, cfg, league: list[list[str]], checkpoint: int, fa
         players[i] = PlayerState(i, r.key, r.team, GROUP_POS[ctx.pos_of(r.key)], int(r.owner), "ACTIVE",
                                  float(r.mu), float(s), av, n=int(r.n), ros_value=float(ros), games_remaining=len(js))
         id_of[r.key] = i
+    if proj is not None and len(proj):
+        from tradecalc.sim.possession.forecast import apply_df
+
+        apply_df(players, proj, today, float(cfg.get("engine", {}).get("game_weight", 0.5)), key_of=lambda k: k)
+        for p in players.values():
+            if p.mu_by_date:
+                js = team_game_index.get(p.pro_team, {})
+                p.ros_value = sum(p.avail.for_game(j, d_) * p.mu_on(d_) for d_, j in js.items())
     rosters = {t + 1: [id_of[k] for k in team if k in id_of] for t, team in enumerate(league)}
     opponents = defaultdict(dict)
     for wi, pairs in enumerate(ctx.sched):
@@ -209,14 +247,14 @@ def hist_state(ctx: SeasonCtx, cfg, league: list[list[str]], checkpoint: int, fa
 
 # --- tests -----------------------------------------------------------------------------------
 
-def season_model_matchups(ctx, cfg, league, actual, checkpoint) -> pd.DataFrame:
+def season_model_matchups(ctx, cfg, league, actual, checkpoint, proj=None) -> pd.DataFrame:
     """Season model (normal approximation): P(win) per remaining matchup vs real result, and
     expected remaining wins vs real remaining wins."""
     from tradecalc.trade.matchup import season_outlook
 
     from tradecalc.trade.matchup import week_dist
 
-    st, _, _ = hist_state(ctx, cfg, league, checkpoint)
+    st, _, _ = hist_state(ctx, cfg, league, checkpoint, proj=proj)
     rows = []
     real_wins = wins_from(actual, ctx.sched, checkpoint)
     for t in range(1, N_TEAMS + 1):
@@ -237,12 +275,12 @@ def season_model_matchups(ctx, cfg, league, actual, checkpoint) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def trade_counterfactuals(ctx, cfg, league, actual, checkpoint, n_trades: int, rng) -> pd.DataFrame:
+def trade_counterfactuals(ctx, cfg, league, actual, checkpoint, n_trades: int, rng, proj=None) -> pd.DataFrame:
     """Random trades: the trade calculator's predicted change in expected wins vs what the
     post-trade rosters (incl. the same forced drops / free-agent signings) actually did."""
     from tradecalc.trade.evaluate import Trade, apply_trade, evaluate
 
-    st, id_of, key_of = hist_state(ctx, cfg, league, checkpoint)
+    st, id_of, key_of = hist_state(ctx, cfg, league, checkpoint, proj=proj)
     W = list(range(checkpoint, len(ctx.weeks)))
     base_wins = wins_from(actual, ctx.sched, checkpoint)
     rows = []
@@ -273,8 +311,19 @@ def trade_counterfactuals(ctx, cfg, league, actual, checkpoint, n_trades: int, r
 
 
 def run_season_model_tests(H, client, cfg, season: str, n_leagues: int = 4, checkpoints=(0, 6, 12),
-                           trade_checkpoints=(6, 12), n_trades: int = 30, seed: int = 0, log=print) -> dict:
+                           trade_checkpoints=(6, 12), n_trades: int = 30, seed: int = 0, log=print,
+                           params: dict | None = None) -> dict:
+    """params: engine parameters for the per-game simulations (possession engine); None = season
+    model only."""
     ctx = season_ctx(H, client, season)
+    sims: dict = {}
+
+    def proj(cp):
+        if params is None:
+            return None
+        if cp not in sims:
+            sims[cp] = rest_of_season_sims(H, ctx, params, cp)
+        return sims[cp]
     playable = set(ctx.logs.key)
     leagues = mock_drafts(ctx.values, playable, n_leagues, seed)
     rng = np.random.default_rng(seed)
@@ -282,9 +331,9 @@ def run_season_model_tests(H, client, cfg, season: str, n_leagues: int = 4, chec
     for li, lg in enumerate(leagues):
         actual = actual_matrix(ctx, lg)
         for cp in checkpoints:
-            mats.append(season_model_matchups(ctx, cfg, lg, actual, cp).assign(league=li))
+            mats.append(season_model_matchups(ctx, cfg, lg, actual, cp, proj(cp)).assign(league=li))
         for cp in trade_checkpoints:
-            trades.append(trade_counterfactuals(ctx, cfg, lg, actual, cp, n_trades, rng).assign(league=li))
+            trades.append(trade_counterfactuals(ctx, cfg, lg, actual, cp, n_trades, rng, proj(cp)).assign(league=li))
         log(f"    league {li + 1}/{n_leagues} done")
     return {"matchups": pd.concat(mats, ignore_index=True),
             "trades": pd.concat(trades, ignore_index=True) if trades else pd.DataFrame()}

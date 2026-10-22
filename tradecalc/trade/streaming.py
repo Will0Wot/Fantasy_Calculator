@@ -118,7 +118,8 @@ def timeline_dist(state, week, timeline: list[tuple[date, list[int]]]) -> tuple[
 def week_points(state, pid: int, week, start: date) -> float:
     """A player's expected fantasy points over the rest of the week (all his games)."""
     p = state.players[pid]
-    return p.mu * sum(state.a_for(p, d) for d in _days(week, start) if state.cal.team_plays(p.pro_team, d))
+    on = getattr(p, "mu_on", lambda d: p.mu)
+    return sum(on(d) * state.a_for(p, d) for d in _days(week, start) if state.cal.team_plays(p.pro_team, d))
 
 
 def available_free_agents(state, exclude=()) -> list[int]:

@@ -226,6 +226,9 @@ def build_world_preseason(H, params: dict, season: str, prev: str, values: dict[
     from tradecalc.sim.engine import _b2b_days_from_logs
 
     w.b2b_days = _b2b_days_from_logs(tl[tl.season == season])
+    from tradecalc.sim.engine import attach_possession
+
+    attach_possession(w, season, cur.game_date.min(), prev, H.pos_of)       # preseason: last season only
     return w
 
 

@@ -1,6 +1,7 @@
-# Season tracker: every morning, record the model's predictions before the day's games and fill in
-# results for finished weeks (tracking/<season>/*.csv), then commit them so the app's
-# "Season tracker" tab and the Excel download stay up to date. See tradecalc/tracking.py.
+# Every morning: fetch last night's play-by-play for the possession simulator, simulate every NBA game
+# left this season for the per-game projections (data/possession/), record the model's predictions before
+# the day's games and fill in results for finished weeks (tracking/<season>/*.csv), then commit both so
+# the app stays up to date. See tradecalc/sim/possession/ and tradecalc/tracking.py.
 name: Season tracker
 
 on:
@@ -33,12 +34,17 @@ jobs:
       - name: Install
         run: pip install -r requirements.txt
 
-      - name: Restore data cache (box scores already downloaded)
+      - name: Restore data cache (box scores and play-by-play already downloaded)
         uses: actions/cache@v4
         with:
-          path: tradecalc/data/cache.sqlite
+          path: |
+            tradecalc/data/cache.sqlite
+            tradecalc/data/pbp
           key: tradecalc-data-${{ github.run_id }}
           restore-keys: tradecalc-data-
+
+      - name: Update play-by-play and simulate the rest of the season
+        run: python -m tradecalc.cli possession
 
       - name: Record predictions and results
         run: python -m tradecalc.cli track
@@ -47,7 +53,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tracking/
+          git add tracking/ tradecalc/data/possession/
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Season tracker: predictions and results $(date -u +%F)"
           git pull --rebase origin main

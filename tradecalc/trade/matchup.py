@@ -41,7 +41,11 @@ def week_dist(roster, week, state, today: date | None = None) -> WeekDist:
     ps = [state.players[i] for i in res.ids]
     mu = np.array([p.mu for p in ps])
     sig = np.array([p.sigma for p in ps])
-    M = float(mu @ res.sum_a)
+    if res.q_day is not None and res.mu_day is not None:
+        pts_i = (res.q_day * res.mu_day).sum(axis=1)               # each game at its own projection
+    else:
+        pts_i = mu * res.sum_a
+    M = float(pts_i.sum())
     m = state.cfg["model"]
     if res.sum_free is not None:
         # Fill-ins: when a starter sits, the team loses his projection minus the fill-in's, so
@@ -63,7 +67,7 @@ def week_dist(roster, week, state, today: date | None = None) -> WeekDist:
     k = m["k"]
     n = np.array([float(getattr(p, "n", 0) or 0) for p in ps])
     s = np.sqrt(k / (k + n))
-    U = float(((res.sum_a * mu * s) ** 2).sum())
+    U = float(((pts_i * s) ** 2).sum())
     abar = np.divide(sa, g, out=np.zeros_like(sa), where=g > 0)
     R = float((val ** 2 * g * np.maximum(g - 1, 0) * abar * (1 - abar)).sum())
     V = V_games + m.get("proj_uncertainty", 0.0) ** 2 * U + m.get("absence_cluster", 0.0) * R
@@ -141,12 +145,12 @@ def _sim_team_fill_in(res, state, n: int, rng: np.random.Generator) -> np.ndarra
     mu = np.array([p.mu for p in ps])
     sig = np.maximum(np.array([p.sigma for p in ps]), 1e-6)
     total = np.zeros(n)
-    for order, S, a, psi in res.plan:
+    for order, S, a, psi, *day_mu in res.plan:
         u = rng.random((n, len(order)))
         plays = u < a
         looks = u < 1.0 - psi * (1.0 - a)          # not known to be out before lock
         starts = plays & (np.cumsum(looks, axis=1) <= S)
-        m, s = mu[order], sig[order]
+        m, s = (day_mu[0] if day_mu else mu[order]), sig[order]
         shape, scale = (m / s) ** 2, s ** 2 / np.maximum(m, 1e-9)
         fp = rng.gamma(shape, scale, size=(n, len(order))) * (m > 0)
         total += (fp * starts).sum(axis=1)

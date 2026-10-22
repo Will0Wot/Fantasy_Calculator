@@ -13,9 +13,9 @@ Two models share data, the injury model and the league settings:
 
 | | **Season model** (`model/`, `trade/`) | **Projection engine** (`sim/`) |
 |---|---|---|
-| Unit | player: fantasy points per game $\mu_i$, spread $\sigma_i$, availability $a_i(d)$ | player: per-minute stat rates, minutes, availability; simulated box scores |
+| Unit | player: fantasy points per game $\mu_i$ (per game where simulated, §2A.5), spread $\sigma_i$, availability $a_i(d)$ | player: possession-level profiles (§2A), minutes, availability; simulated box scores |
 | Week | analytic: Gaussian team total | Monte Carlo over every NBA game |
-| Used by | Matchup tab, Trade builder, Trade finder, Players, quick league forecast | Simulate tab, detailed league forecast; its minutes feed the season model |
+| Used by | Matchup tab, Trade builder, Trade finder, Streaming, Players, quick league forecast | Simulate tab, detailed league forecast; every remaining game's simulation feeds the season model (§2A.5), and so do its minutes |
 | Speed | ~10 ms per trade (enumerates ~10⁵ trades) | ~1 s per 10,000 weeks |
 
 Fantasy points are linear in the box score: $\mathrm{FP} = w^\top x$ with league weights
@@ -100,6 +100,20 @@ back ramps linearly from 0 at ESPN's return date $R$ to $\text{rtp}$ at $R + w$,
 $w = \operatorname{clip}(0.3 \cdot \text{days out}, 4, 30)$; day-to-day ⇒ 0.5 until $R$; profile
 multipliers apply in date windows (ramp-up weeks, year-1 / year-2 games effects).
 
+**Not on the injury report** (live only). A player with no injury designation today is much safer for
+his next few games than his season rate says, because rest days and new injuries show up on the report
+first. On the NBA's official reports 2022-23 to 2025-26 (§3.1), rotation players not listed for their
+team's next game played it 92.2% of the time, where the season rate predicted 78.7%, with no
+back-to-back effect (92.2% vs 92.3%). So his chance of missing the $j$-th upcoming team game is scaled:
+
+$$
+1 - a_i(d_j) = \big(1 - a^{\text{rate}}_i(d_j)\big)\,\big[1 - 0.63 \cdot 0.65^{\,j}\big]
+$$
+
+×0.37 for the next game, then ×0.59, 0.73, 0.83, 0.89, 0.93 (measured: 0.37, 0.62, 0.74, 0.82, 0.88,
+0.94): back to the season rate after about six games. In the engine the back-to-back rest factor goes
+inside the bracket. Backtests have no live status and don't use it.
+
 **Second opinion on games**: expected remaining games
 $E_i = \sum_j a_i(d_j)$ are blended with ESPN's projected games played $E^{\text{ESPN}}_i$ (scaled to
 games left): $E'_i = (1-\lambda)E_i + \lambda E^{\text{ESPN}}_i$, $\lambda = 0.5\max(0, 1 - G_t/41)$,
@@ -133,7 +147,8 @@ P(i \text{ starts and plays on } d) = a_i(d)\; P(K_{<i} < S_d),
 $$
 
 computed exactly by a recursion over $k \in \{0, \dots, S_d\}$ ($k = S_d$ absorbing), vectorized over
-the days of the week (`trade/lineup.py: _fill_in_week`). Position rules enter through $S_d$ only
+the days of the week (`trade/lineup.py: _fill_in_week`). Each night is ranked by that night's
+projection $\mu_i(d)$ (§2A.5), so a good matchup can move a bench player into the lineup. Position rules enter through $S_d$ only
 (the fill-in order ignores them; ESPN rosters with G/F/3×UTIL slots are flexible). The original
 model started players on expected value $a_i\mu_i$ and left the slot empty when a starter sat, which
 undervalued depth. Started games per player: $g_i = \sum_d r_i P(K_{<i} < S_d)$.
@@ -332,6 +347,15 @@ $$
 
 plus a shrunk coach effect on back-to-backs; the factor is $P(\text{no sit}\mid \text{game}) / P(\text{no sit}\mid \text{average game})$.
 
+**Absences persist within the week** (weekly fantasy matchups, `absence_weeks`). A player's play/miss
+draws for his games that week share a normal component (Gaussian copula): he plays game $g$ if
+$\sqrt{\rho}\,Z_i + \sqrt{1-\rho}\,\varepsilon_{ig} < \Phi^{-1}(a_i(d_g))$, so each game keeps its probability
+but a player who misses Monday is likely to miss Wednesday. On 2022-23 and 2023-24, the variance of
+weekly games played minus expected was 1.9× what independent games give for players not on Monday's
+injury report ($\rho = 0.59$, used live) and 2.8× with no injury report at all ($\rho = 0.85$, used in
+backtests). Without it both engines' weekly margins were too tight: the actual margin's spread was
+1.25–1.30× the predicted one on 2025-26; with it (and §2A.3's weekly form), 0.96–1.02.
+
 ### 2.6 Game simulation (`sim/engine.py: simulate_games`)
 
 Per NBA game and draw: margin $\sim N(\mu_m, 14.05)$, $\mu_m$ from season net ratings × pace + 1.5 home;
@@ -393,6 +417,136 @@ $1/(1-\pi)$ so mean availability is unchanged. Form size tuned on the prior seas
 cover 80%.
 
 ---
+
+## 2A. Possession simulator (default engine, `sim/possession/`)
+
+RotoBot describes its game simulations as "every possession built from real play-by-play: where each
+player shoots from, how often he makes it, who he passes to, and who's guarding him", 5,000 games per
+matchup. This engine follows that design and replaces §2.6's box-score draws; minutes (§2.2),
+availability (§2.5), the weekly fantasy lineup (§2.7) and the season layer (§2.9) are shared.
+
+### 2A.1 Data
+
+ESPN play-by-play for every regular-season game since 2021-22 (`ingest/pbp.py`), checked against
+box scores: field goals, threes, free throws, rebounds, assists, steals, blocks and turnovers match
+to within 0.2% per player. Shots are placed in five zones from ESPN's court coordinates (basket at
+$(25, 0)$, distance $\sqrt{(x-25)^2 + y^2}$): RA ($\le 4$ ft), PAINT, MID, C3 (corner three), AB3. NBA
+tracking tables (`ingest/tracking.py`) give each defender's contested shots by distance band versus
+the shooters' normal rates, and offensive-by-defensive matchup possessions.
+
+### 2A.2 Player profiles (`profiles.py`)
+
+With $e_i$ = team possessions while player $i$ is on the floor (team possessions $\times$ his share of team
+minutes), each rate is an empirical-Bayes estimate toward his position group (G/F/C), with last season at
+half weight:
+
+$$
+\hat r_i = \frac{x_i^{\text{cur}} + \tfrac12 x_i^{\text{prev}} + K\, \bar r_{g(i)}}{e_i^{\text{cur}} + \tfrac12 e_i^{\text{prev}} + K}
+$$
+
+for shot opportunities (FGA + fouled-shot trips) per possession ($K = 50$), trip share (80), zone mix
+(Dirichlet, 15), make rate by zone (RA 120, PAINT 80, MID 120, C3 200, AB3 300 attempts), assisted share by
+zone (10), and-ones (80), FT% (30), turnovers (200), assists (80), steals (800), blocks (300), offensive and
+defensive rebound shares (120). Every $K$ was fitted by split-half prediction (odd games predict even
+games) on 2021-22 and 2022-23. Team defense: forced-turnover factor and shot-zone allowance factors
+(shrunk with 2,500 possessions / 1,500 shots).
+
+Players with fewer than 500 (weighted) possessions in this and last season (a missed season, a rookie's
+first games) also get their own two seasons before that, at ¼ and ⅛ weight. Everyone else is unchanged:
+adding older seasons for everyone made predictions slightly worse (player-game error +0.02 on two of three
+test seasons).
+
+Defenders (`defense.py`): for zone $z$ with tracking band $b(z)$,
+
+$$
+\delta_j(z) = \Big[\operatorname{logit}\big(\text{FG\%}_{\text{allowed}}\big) - \operatorname{logit}\big(\text{FG\%}_{\text{normal}}\big)\Big]\cdot \frac{n_j}{n_j + K_b}
+$$
+
+with $K$ = 250 (inside 6 ft), 300 (inside 10 ft), 600 (beyond 15 ft), 1,500 (threes: mostly luck). Only
+the two seasons before the simulated one are used.
+
+### 2A.3 One possession
+
+With $O$, $D$ the five players on the floor for offense and defense:
+
+1. **Lineups.** Inclusion probability $\pi_i = m_i / 48$ from the simulated minutes (rescaled so
+   $\sum \pi = 5$), drawn by systematic sampling in a random order, redrawn every 4 possessions (stints).
+2. **Turnover** with probability $\min\big(\sum_{i \in O} t_i \cdot f^{\text{tov}}_D, 0.35\big)$; the player
+   $\propto t_i$; a steal with probability $\sum_{j \in D} s_j / p_{\text{tov}}$, by $j \propto s_j$.
+3. **Shooter** $\propto o_i^{\,1.5}$ among $O$. The exponent above 1 means high-usage players take more than a
+   proportional share; fitted on 2022-23 (1.5 minimized player-game error).
+4. **Fouled before the shot** with probability equal to his trip share: 2 free throws (3 on a three-point attempt, 9% of the
+   time). Otherwise **zone** $z \propto p_i(z)\, f_D(z)$.
+5. **Who's guarding him:** $P(j) \propto \big(a_{ij} + 20\, \text{sim}(\text{pos}_i, \text{pos}_j)\, m_j/48\big)$, where
+   $a_{ij}$ = past matchup possessions; for RA / PAINT shots this is mixed 50/50 with rim presence
+   (contests inside 6 ft per game).
+6. **Make:** $\operatorname{logit} p = \operatorname{logit}\hat{\text{fg}}_i(z) + \delta_j(z) + h$, with $h$ a small home edge.
+7. **Block** (misses): $P = b_z \cdot \frac{\sum_{j \in D} \beta_j}{\bar B} / (1 - p)$, credited $\propto \beta_j$.
+8. **Assist** (makes): $P = \text{as}_i(z) \cdot \frac{\sum_{k \in O \setminus i} a_k}{\bar A_i}$, where $\bar A_i$ is the
+   passing he usually has on the floor; the passer $k \propto a_k \frac{n_{ki} + c}{\mathbb E[n_{ki}] + c}$, i.e. the
+   passer's own rate tilted by the pair's history relative to what that rate predicts ($c = 10$).
+9. **And-one** $\propto$ his and-one rate $\times$ a zone weight; free throws by his FT%.
+10. **Rebound** after a miss: offense gets it with probability $\frac{\sum_O \text{or}_i}{\sum_O \text{or}_i + \sum_D \text{dr}_j}$
+    (0.45$\times$ after a missed free throw), credited to a player with probability $\sum_O \text{or} + \sum_D \text{dr}$; an
+    offensive rebound continues the possession (a putback by the rebounder 30% of the time).
+
+Possessions per team $\approx 0.965 \times$ game pace $\times \mathcal N(1, 0.035)$; tied games add overtime (~10.5
+possessions per team). Each player gets a weekly form multiplier on his share of shots, passes and
+rebounds (lognormal, sd 0.30), shared by his games that week; chosen on 2022-23 so weekly 50% / 80% ranges
+hold 50% / 80% of player-weeks (sd 0.18 held 46% / 75%; single games: 80.1% inside the 80% range). The
+single-game simulator draws it too. League scale factors (fitted on 2022-23 so each stat's
+league total matches box scores): turnovers 0.956, free-throw trips 1.08, steals 0.93, blocks 0.87, three-point
+share 1.04. Each simulation's box score gives every player's fantasy points.
+
+### 2A.4 Validation
+
+Tuning used 2022-23 only. On the three held-out seasons, both engines simulated the same 7 sampled weeks per
+season (6,400–7,000 player-games each, 600 simulations, each engine built only from data before the week):
+
+| Season | Average miss: per-minute → possession | RMSE | Bias | Inside 80% range |
+|---|---|---|---|---|
+| 2023-24 | 10.13 → **10.09** | 12.91 → 12.93 | −0.85 → −0.77 | 79.2% → 80.4% |
+| 2024-25 | 10.20 → **10.18** | 13.00 → 12.97 | −1.49 → −1.25 | 78.2% → 78.9% |
+| 2025-26 | 10.04 → **10.02** | 12.85 → 12.81 | −1.34 → −0.32 | 79.0% → 80.9% |
+
+Correlation with what happened is the same (0.63–0.68). With availability known in advance, player-weeks
+land inside the 80% range 79–82% of the time. The full audit, re-run on the same code with each engine
+(`docs/model_audit.md` §0), is better with the possession engine on most measures, including preseason league
+rankings (rank correlation 0.75 / 0.54 / 0.57 against 0.52 / 0.21 / 0.06). Speed: about 0.6 s per game
+for 5,000 simulations, and about a minute for every game left in a season at 300.
+
+### 2A.5 From game simulations to fantasy projections (`sim/possession/forecast.py`)
+
+Each morning the GitHub job (`tradecalc possession`) adds yesterday's play-by-play, rebuilds the
+profiles, and simulates every game left in the season (300 times each, about a minute for the whole
+season). For each player-game it saves $\hat f_i(d)$, his average fantasy points in the simulations
+where he plays (`data/possession/projections_<season>.parquet`). The season model then projects each
+game as
+
+$$
+\mu_i(d) = (1 - w)\,\mu_i + w\,\hat f_i(d), \qquad w = 0.5
+$$
+
+(`engine.game_weight`), so a game reflects that night's opponent, who's out on both teams, back-to-backs
+and minutes. It is used everywhere $\mu_i$ was: the weekly mean $M = \sum_i \sum_d q_{id}\, \mu_i(d)$,
+each night's bench order (§1.5), rest-of-season value $\sum_j a_i(d_j)\,\mu_i(d_j)$, trades and streaming.
+Next-week player-game error (average miss, fantasy points; season model alone / simulation alone /
+50-50 average):
+
+| Season | Season model | Simulation | 50/50 |
+|---|---|---|---|
+| 2022-23 (tuning) | 9.81 | 9.86 | **9.71** |
+| 2023-24 | 10.26 | 10.08 | **10.06** |
+| 2024-25 | 10.25 | 10.18 | **10.11** |
+| 2025-26 | 10.13 | 10.04 | **9.97** |
+
+The best single weight on the test seasons was 0.65, worth only 0.01 points per game, so 0.5 was kept.
+The average is not compressed (regressing actual on it gives slopes 0.94–0.97).
+
+A player the simulator barely knows (under 150 possessions of play-by-play, about two games: a rookie's
+first games) only has a position average there, so his level phases in:
+$\lambda_i = \min(1, e_i / 150)$, level $= \lambda_i \bar f_i + (1 - \lambda_i)\mu_i$, and each game is
+$\hat f_i(d)$ rescaled to that level (the game-to-game pattern stays the simulation's).
 
 ## 3. Injury model
 
@@ -484,10 +638,11 @@ predictions pushes it below 1 even for an unbiased model, so ≈ 0.8–1.2 is th
   lineup / schedule / roster-spot accounting, not better ranking.
 * Mock leagues have no trades, waivers or streaming; mock drafts only take players who played at
   least one game that season; lineups use a greedy position rule.
-* No historical injury reports exist, so injury-report effects are validated only through research
-  (§3), not backtested. In-season backtest worlds leave out players who are hurt at the prediction
-  date (adding them back with a fitted absence-streak availability was tested: neutral to slightly
-  worse, not adopted). Live, ESPN's injury report handles this.
+* Backtests don't use injury reports (the historical ones in §3.1 are used to measure availability
+  rules, e.g. §1.4's "not on the injury report" and §2.5's within-week persistence), so in-season
+  backtest worlds leave out players who are hurt at the prediction date (adding them back with a
+  fitted absence-streak availability was tested: neutral to slightly worse, not adopted). Live,
+  ESPN's injury report handles this.
 * Minutes are the dominant error source (knowing true minutes cuts per-game MAE ~20%).
 * Fill-ins assume every absence is known before lock ($\psi = 1$); a manager who doesn't set lineups
   daily gets less from depth (`lineup.fill_in` < 1).

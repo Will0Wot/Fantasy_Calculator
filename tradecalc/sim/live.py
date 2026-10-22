@@ -48,7 +48,7 @@ def fit_and_save(conn, cfg, league, log=print) -> dict:
     p.update(fit_calibration(H, p, s1, s0, mondays))
     best = None
     for sd in (0.12, 0.18, 0.24):
-        c = coverage(H, dict(p, form_sd=sd), s1, s0, mondays[:4], n=1500)
+        c = coverage(H, dict(p, form_sd=sd), s1, s0, mondays[:4], n=1500, box=True)   # per-minute engine's form
         score = abs(c["week_in80"] - 0.8) + abs(c["week_in50"] - 0.5)
         log(f"  form_sd {sd}: weekly 80% coverage {c['week_in80']:.3f}, 50% coverage {c['week_in50']:.3f}")
         if best is None or score < best[0]:

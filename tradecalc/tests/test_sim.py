@@ -108,3 +108,15 @@ def test_fit_k_prefers_more_shrinkage_for_noisy_stats():
                          "fg3m": rng.binomial(fg3a, 0.36), "ftm": 2})
     k = fit_k(pd.DataFrame(rows))
     assert k["stl"] > k["reb"]
+
+
+def test_absences_persist_within_the_week_but_each_game_keeps_its_chance():
+    from tradecalc.sim.engine import absence_weeks
+
+    draw = absence_weeks(np.random.default_rng(0), 20000, 0.85)
+    g1, g2 = draw(["a"], [0.8]), draw(["a"], [0.8])
+    assert abs(g1.mean() - 0.8) < 0.01 and abs(g2.mean() - 0.8) < 0.01
+    assert (~g2[~g1[:, 0], 0]).mean() > 0.5        # missed Monday -> likely misses Wednesday too
+    ind = absence_weeks(np.random.default_rng(0), 20000, 0.0)
+    h1, h2 = ind(["a"], [0.8]), ind(["a"], [0.8])
+    assert abs((~h2[~h1[:, 0], 0]).mean() - 0.2) < 0.02    # independent games

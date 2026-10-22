@@ -47,6 +47,11 @@ class PlayerState:
     injury: InjuryView | None = None
     minutes: float = float("nan")    # projected minutes per game (depth chart, last season, this season)
     role: str = ""                   # Starter / Rotation / Bench
+    mu_by_date: dict = field(default_factory=dict)   # per-game projection where game simulations exist
+
+    def mu_on(self, d) -> float:
+        """Projected fantasy points if he plays on date d (that game's projection, else his average)."""
+        return self.mu_by_date.get(d, self.mu)
 
 
 @dataclass
@@ -264,7 +269,7 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
                           out_default_games=m["out_default_games"], games_until_return=games_out,
                           default_rate=m["default_gp_rate"], return_date=return_date, today=today,
                           window=ic.window, rtp=view.rtp, typical_days=view.typical_days,
-                          modifiers=view.modifiers)
+                          modifiers=view.modifiers, healthy_now=True)
         flags = list(view.notes)
         if live is not None and key in b.index:
             r = b.loc[key]
@@ -307,6 +312,18 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
             mrow = mrow.iloc[0] if isinstance(mrow, pd.DataFrame) else mrow
             players[p.espn_id].minutes = float(mrow["minutes"])
             players[p.espn_id].role = str(mrow["role"])
+
+    # Per-game projections from the possession simulator (sim/possession/forecast.py, refreshed each
+    # morning): each game = average of the season-long estimate and that game's simulation.
+    eng = cfg.get("engine", {})
+    if eng.get("mode") == "possession":
+        from tradecalc.sim.possession import forecast
+
+        if forecast.apply(players, lg["nba_season"], today, float(eng.get("game_weight", 0.5)), norm_name):
+            for p in players.values():
+                if p.mu_by_date:
+                    p.ros_value = sum(p.avail.for_game(j, d) * p.mu_on(d)
+                                      for j, d in enumerate(team_games.get(p.pro_team, [])))
 
     rosters = {tid: list(t.roster) for tid, t in league.teams.items()}
     ir = {tid: {i for i in t.roster if league.players[i].lineup_slot == "IR"} for tid, t in league.teams.items()}

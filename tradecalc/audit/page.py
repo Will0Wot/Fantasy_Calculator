@@ -40,6 +40,8 @@ METRICS = [
     ("Trades rated DECLINE: real gain (wins)", None, lambda r: _g(r, "season_model", "trades", "decline_real_mean")),
     ("Rest-of-season wins after week 6: error (wins)", "lower", lambda r: _g(r, "season_model", "season_wins", 1, "mae")),
     ("Plays tonight? (availability): Brier", "lower", lambda r: _g(r, "availability", "brier_model")),
+    ("Simulator, same player-games: old per-minute engine, error", "lower", lambda r: _g(r, "engine_sims", "box", "MAE")),
+    ("Simulator, same player-games: possession engine, error", "lower", lambda r: _g(r, "engine_sims", "possession", "MAE")),
     ("Simulator: player points per game, error", "lower", lambda r: _g(r, "engine_points", "summary", "engine", "MAE")),
     ("Simulator: player points per game, bias", "zero", lambda r: _g(r, "engine_points", "summary", "engine", "bias")),
     ("Simulator: player-weeks inside the 80% range", "80", lambda r: _g(r, "engine_ranges", "week_in80")),
@@ -106,7 +108,19 @@ def _fmt(v, kind="f2"):
     return {"f2": f"{v:.2f}", "f3": f"{v:.3f}", "pct": f"{v:.0%}", "f1": f"{v:.1f}"}[kind]
 
 
-def render(st, final: dict | None, base: dict | None, report_md: str | None) -> None:
+def engine_comparison(final: dict, box: dict) -> pd.DataFrame:
+    """The whole audit run twice on the same code: possession engine (final) vs the old per-minute engine."""
+    rows = []
+    for label, good, get in METRICS:
+        row = {"Metric": label, "Goal": _GOOD.get(good, "")}
+        for s, r in final["seasons"].items():
+            row[f"{s} per-minute"] = get(_g(box, "seasons", s))
+            row[f"{s} possession"] = get(r)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def render(st, final: dict | None, base: dict | None, report_md: str | None, box: dict | None = None) -> None:
     if not final:
         st.info("No audit results yet. Run `tradecalc audit --baseline` to create config/audit.json.")
         return
@@ -208,11 +222,24 @@ prediction date. Then the predictions were compared with what really happened in
         c1.metric("Games inside 80% range", _fmt(rg.get("game_in80"), "pct"))
         c2.metric("Weeks inside 80% range", _fmt(rg.get("week_in80"), "pct"))
         c3.metric("Weeks inside 50% range", _fmt(rg.get("week_in50"), "pct"))
+        es = r.get("engine_sims") or {}
+        if es.get("box") and es.get("possession"):
+            st.markdown(f"**Old per-minute engine vs possession engine on the same {es.get('n', 0):,} player-games**")
+            st.dataframe(pd.DataFrame({"per-minute": es["box"], "possession": es["possession"]}).T.round(3),
+                         use_container_width=True)
         em = r.get("engine_matchups") or {}
         ch = _calib_chart(em.get("calibration"), _g(b, "engine_matchups", "calibration"),
                           f"Simulator: predicted vs real win rate ({em.get('n', 0)} matchups)")
         if ch is not None:
             st.altair_chart(ch, use_container_width=True)
+        if box:
+            with st.expander("The whole audit with the old per-minute engine (same code, same mock leagues)"):
+                cmp_ = engine_comparison(final, box)
+                num = [c for c in cmp_.columns if c not in ("Metric", "Goal")]
+                st.dataframe(cmp_.style.format({c: lambda v: _fmt(v, "f3") for c in num}, na_rep="–"),
+                             hide_index=True, use_container_width=True)
+                st.caption("Per-minute = the engine before the possession simulator, with no per-game projections "
+                           "in the season model. Everything else is identical.")
     with t5:
         sw = _g(r, "season_model", "season_wins")
         if sw:

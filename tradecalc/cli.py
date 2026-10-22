@@ -410,6 +410,70 @@ def track(excel: str = typer.Option(None, help="Also write the Excel workbook to
         typer.echo(f"Wrote {excel}")
 
 
+@app.command()
+def pbp(season: list[str] = typer.Option(["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"], "--season",
+                                         help="Seasons to collect (repeatable); the current season is added if games exist.")):
+    """Download and parse ESPN play-by-play for every regular-season game (data/pbp/, not committed)."""
+    from datetime import timedelta
+
+    from tradecalc.clock import league_today
+    from tradecalc.ingest import nba
+    from tradecalc.ingest import pbp as PBP
+
+    cfg, conn = _ctx()
+    out = cfg.path("data/pbp")
+    for s in season:
+        logs = nba.game_logs(conn, s)
+        days = sorted({date.fromisoformat(str(d)[:10]) for d in logs["game_date"].unique()})
+        if s == cfg["league"]["nba_season"]:
+            st = _state()
+            days = [st.cal.first_day + timedelta(i) for i in range((league_today() - st.cal.first_day).days)]
+        PBP.update(s, days, out, log=typer.echo)
+
+
+@app.command()
+def possession(seeds: bool = typer.Option(False, help="Also rewrite the finished seasons' count files (data/seed/)."),
+               projections: bool = typer.Option(True, help="Simulate every remaining game for the per-game projections.")):
+    """Possession simulator data: update this season's play-by-play and save its counts, then simulate
+    every game left this season and save each player's projected fantasy points per game
+    (data/possession/, committed so the app needs neither raw play-by-play nor the long simulation)."""
+    import time
+    from datetime import timedelta
+
+    from tradecalc.clock import league_today
+    from tradecalc.ingest import pbp as PBP
+    from tradecalc.ingest.league import load_league
+    from tradecalc.sim import possession as POS
+    from tradecalc.sim.possession import forecast
+    from tradecalc.sim.possession.profiles import counts
+
+    cfg, conn = _ctx()
+    season = cfg["league"]["nba_season"]
+    first = load_league(_client(cfg, conn)).first_day
+    days = [first + timedelta(i) for i in range((league_today(cfg) - first).days)]
+    E, PL = PBP.update(season, days, POS.PBP_DIR, log=typer.echo)
+    if len(E):
+        counts(E, PL).save(POS.LIVE / f"counts_{season}")
+        typer.echo(f"Saved {POS.LIVE}/counts_{season}_* ({E.game_id.nunique()} games)")
+    if seeds:
+        for s in ["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"]:
+            Es, Ps = PBP.load(POS.PBP_DIR, s)
+            if len(Es):
+                counts(Es, Ps).save(POS.SEED / f"pbp_counts_{s}")
+                typer.echo(f"Saved seed counts for {s}")
+    if not (projections and POS.enabled()):
+        return
+    st = _state()                                  # builds the simulation world with today's counts
+    world, coaches = getattr(st, "world", None) or (None, None)
+    if world is None or world.possession is None:
+        typer.secho("No simulation world (engine parameters or play-by-play missing): projections skipped.", fg="yellow")
+        return
+    t0 = time.time()
+    df = forecast.project(world, st, coaches, n=forecast.settings()[1], log=typer.echo)
+    out = forecast.save(df, season, st.today)
+    typer.echo(f"Saved {out}: {len(df):,} player-games over {df.date.nunique()} days ({time.time() - t0:.0f}s)")
+
+
 @app.command("injury-reports")
 def injury_reports_cmd(season: list[str] = typer.Option(["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"],
                                                         "--season", help="Seasons to collect (repeatable).")):

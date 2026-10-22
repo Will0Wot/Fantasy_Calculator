@@ -23,12 +23,18 @@ and the same for every remaining week.
    his projected minutes (starter or bench) × his per-minute production.
    As games are played, his real numbers take over. After {k} games, real results count as much as the preseason
    view, and they quickly dominate after that.
-2. **Will he play?** Each player gets a chance of suiting up, built from how often he's played the last two seasons,
-   plus any current injury (see the Injuries tab).
-3. **Who starts?** For each day, it picks your best legal lineup from players whose NBA team plays that day.
-   Bench games don't count, so a crowded night can leave good players on the bench. If a starter is ruled out
-   before tip-off, your next-best player with a game fills in, so depth is worth something.
-4. **Win chance.** Your expected total and how much it could swing are compared with your opponent's.
+2. **Each game on its own.** Every morning every NBA game left this season is simulated possession by possession
+   (see Simulate). A player's projection for a game is the average of his season-long number and that game's
+   simulation, so a soft opponent, a teammate's absence or a back-to-back shows up game by game. (On past seasons
+   the average beat either one alone.)
+3. **Will he play?** Each player gets a chance of suiting up, built from how often he's played the last two seasons,
+   plus any current injury (see the Injuries tab). A player who isn't on today's injury report is very likely to
+   play his next game (about 93% for a typical player), fading back to his usual rate over about six games.
+4. **Who starts?** For each day, it picks your best legal lineup from players whose NBA team plays that day,
+   ranked by that day's projections. Bench games don't count, so a crowded night can leave good players on the
+   bench. If a starter is ruled out before tip-off, your next-best player with a game fills in, so depth is worth
+   something.
+5. **Win chance.** Your expected total and how much it could swing are compared with your opponent's.
 
 **Dates:** only days from today onward are projected. Days already played this week use the real points ESPN
 recorded.
@@ -71,24 +77,51 @@ played.
 def simulate(params: dict | None) -> str:
     form = (params or {}).get("form_sd", 0.18)
     return f"""
-**What you're looking at:** any two fantasy teams, any week, played out 10,000 times, game by game.
+**What you're looking at:** any two fantasy teams, any week, with every NBA game in it played out thousands of
+times, **possession by possession** (the way RotoBot simulates games), then turned into fantasy points.
 
-**What happens in each simulated week**
+**Each possession, built from real play-by-play** (this season so far, with last season as the starting point):
+- **Who's on the floor:** five players per team, each playing his simulated minutes.
+- **Turnover?** The players' turnover rates against how hard this defense forces them; stolen or not, and by whom.
+- **Who shoots, and from where:** each player's share of his team's shots, and his mix of rim, paint,
+  mid-range, corner-three and above-the-break-three attempts (some defenses push opponents to certain zones).
+- **Who's guarding him:** the defenders he has actually faced most; at the rim, partly whoever protects the rim.
+- **Does it go in?** His make rate from that zone, adjusted for that defender (a Holmgren or Wembanyama at the rim
+  takes a big bite; three-point "defense" barely matters).
+- **Blocks, fouls, and-ones, free throws,** and **who passed to him** (each player's assist rate, tilted by how
+  often that passer actually feeds that shooter).
+- **Rebounds:** offensive or defensive, from the rebounding rates of the ten players on the floor; an offensive
+  board keeps the possession alive (sometimes a putback).
+
+**Around the possessions**
 1. **Who suits up.** For every NBA game, each rotation player's chance of playing comes from injuries, the injury
-   report, and rest on back-to-backs. Older, heavy-minute players sit more often on the second night.
-   When a star sits in a simulation, his teammates absorb his role in that simulation.
+   report, and rest on back-to-backs. Older, heavy-minute players sit more often on the second night. A player who
+   isn't on today's injury report is very likely to play his next game, fading to his usual rate over about six
+   games. Absences stick within a week: a player who misses Monday is likely to miss Wednesday too (measured on
+   five seasons of official NBA injury reports). When a star sits in a simulation, his teammates absorb his role in
+   that simulation.
 2. **How the game goes.** Each game gets a final margin (blowouts send starters to the bench early) and a pace
    (fast games mean more stats for everyone).
 3. **Minutes.** Recent minutes, plus a share of any absent teammate's minutes (mostly to the same position), plus
    blowout effects. The team total always adds up to a real game's 240.
-4. **Usage.** When teammates are out, the players left take more shots, free throws and assists.
-5. **Opponent.** Some defenses force turnovers, some allow free throws, and some play fast. If the opponent's best
-   defender sits, scoring gets slightly easier.
-6. **The box score.** Every shot, make, rebound and assist is drawn, so a 25-point scorer sometimes drops 40 and
-   sometimes goes cold. Each player also gets a "form" factor for the week (about ±{form:.0%}), so his good and
-   bad nights cluster the way they do in real life.
-7. **Your lineup.** Each day the best eligible players who are active are started. Then all the points are added
+4. **Usage follows the lineup.** When a teammate sits, the players on the floor share his shots and passes, so the
+   remaining stars get more touches.
+5. **Form.** Each player gets a hot/cold factor for the week, so his good and bad nights cluster the way they do
+   in real life.
+6. **Your lineup.** Each day the best eligible players who are active are started. Then all the points are added
    up and compared.
+
+**Why possessions?** Tested on three past seasons against our older engine (which drew each stat from per-minute
+rates), the possession simulator was about as accurate player by player (see the Model audit tab), and it
+knows things per-minute rates can't: who's on the floor together, who guards whom, and who passes to whom.
+
+**Every game, every day.** Each morning every NBA game left this season is simulated, and each player's
+projection for each game becomes the average of his season-long number and that game's simulation. The Matchup,
+Trade, Streaming and Players tabs all use these game-by-game projections. A rookie the simulator hasn't seen
+play yet keeps his season-long number until he has about two games of play-by-play.
+
+**NBA game simulator** (below the matchup): pick any NBA game to see its win probability, score range and the
+box score of the most typical of 5,000 simulated games.
 
 **Current starting lineups.** Every team's starters come from ESPN's depth chart as it stands today. A listed
 starter gets at least starter-level minutes, and backups are capped by their depth slot (6th man ~30, third
@@ -102,7 +135,8 @@ simulation.
 - *Known major injuries* (an ACL or Achilles tear, for example) still carry the research-based effects on
   games played.
 - *Per-minute production* still comes from last season. Testing showed that adding the season before made
-  projections slightly worse, even for players coming off injury.
+  projections slightly worse in general, so only players with almost no play-by-play this season and last (a
+  missed season, a rookie's first games) also get their own older seasons.
 
 **Dates:** only the remaining days of the week are simulated. Points from days already played are added as they
 actually happened. The schedule grid shows ● for games still to play and ○ for games already played.
@@ -212,6 +246,9 @@ def injuries(cfg) -> str:
      for longer injuries), because return dates usually slip.
    - **Out for the season:** 0% for every remaining game.
    - **Day-to-day:** 50% for his next game (or until the listed return date), then normal.
+   - **Not on the report:** very likely to play his next game (about 93% for a typical player instead of his usual
+     ~80%), fading back to his usual rate over about six games. Rotation players not listed for their next
+     game played it 92% of the time on five seasons of official NBA injury reports.
 2. **What kind of injury.** Each injury is matched to one of about 20 research-based profiles. Each profile sets:
    - typical time out;
    - the chance he returns this season at all;
@@ -252,9 +289,9 @@ healthy**, **whether he'd even make your starting lineup** that night, and **who
 ### Two engines
 | | Season model | Game-by-game simulator |
 |---|---|---|
-| Used in | Matchup, Trade builder, Trade finder, Players | Simulate |
+| Used in | Matchup, Trade builder, Trade finder, Streaming, Players | Simulate, and every morning it plays out every NBA game left this season for the season model |
 | Speed | Instant, so it can test thousands of trades | About a second for 10,000 simulated weeks |
-| Detail | Points per game, availability, daily lineups, schedule | Adds minutes, usage, opponent defense, pace, blowouts, rest, every stat |
+| Detail | Points per game (each game blended with that game's simulation), availability, daily lineups, schedule | Possession by possession: lineups, shots by zone, defenders, passes, rebounds, minutes, pace, blowouts, rest |
 
 Both share the same injury model and the same league settings.
 """
