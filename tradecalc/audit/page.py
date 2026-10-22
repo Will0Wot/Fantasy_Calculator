@@ -136,7 +136,7 @@ prediction date. Then the predictions were compared with what really happened in
     sb = scoreboard(final, base)
     num = [c for c in sb.columns if c not in ("Metric", "Goal")]
     st.dataframe(sb.style.format({c: lambda v: _fmt(v, "f3") for c in num}, na_rep="–"),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
     st.caption("Brier score: average squared error of a probability (0.25 = always saying 50%). Calibration slope: "
                "1 means a 70% call wins 70% of the time; below 1 the model is overconfident, above 1 too timid. "
                "Trade numbers come from random trades in mock leagues, replayed with real box scores.")
@@ -165,7 +165,7 @@ prediction date. Then the predictions were compared with what really happened in
         ch = _calib_chart(m.get("calibration"), _g(b, "season_model", "matchups", "calibration"),
                           "Predicted vs real win rate")
         if ch is not None:
-            st.altair_chart(ch, use_container_width=True)
+            st.altair_chart(ch, width="stretch")
         bc = m.get("by_checkpoint") or []
         if bc:
             st.dataframe(pd.DataFrame(bc).rename(columns={"checkpoint": "predicted at week"}).round(3), hide_index=True)
@@ -185,7 +185,7 @@ prediction date. Then the predictions were compared with what really happened in
         c4.metric("Benchmark: total-value correlation", _fmt(tr.get("corr_naive_ros")))
         ch = _trade_chart(tr.get("points") or [])
         if ch is not None:
-            st.altair_chart(ch, use_container_width=True)
+            st.altair_chart(ch, width="stretch")
         st.markdown(f"""
 - Trades the calculator rated **ACCEPT** ({tr.get('accept_n', 0)}): predicted **{_fmt(tr.get('accept_pred_mean'))}**
   extra wins, really gained **{_fmt(tr.get('accept_real_mean'))}**.
@@ -208,15 +208,15 @@ prediction date. Then the predictions were compared with what really happened in
         ch = _calib_chart(a.get("calibration"), a.get("calibration_raw"),
                           "Chance to play a game: predicted vs real")
         if ch is not None:
-            st.altair_chart(ch, use_container_width=True)
+            st.altair_chart(ch, width="stretch")
     with t4:
         ep = _g(r, "engine_points", "summary") or {}
         if ep:
             st.markdown("**Points per game, by model version** (mean absolute error, bias, RMSE)")
-            st.dataframe(pd.DataFrame(ep).T.round(2), use_container_width=True)
+            st.dataframe(pd.DataFrame(ep).T.round(2), width="stretch")
         bs = _g(r, "engine_points", "by_stage")
         if bs:
-            st.dataframe(pd.DataFrame(bs).round(2), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(bs).round(2), hide_index=True, width="stretch")
         rg = r.get("engine_ranges") or {}
         c1, c2, c3 = st.columns(3)
         c1.metric("Games inside 80% range", _fmt(rg.get("game_in80"), "pct"))
@@ -226,18 +226,18 @@ prediction date. Then the predictions were compared with what really happened in
         if es.get("box") and es.get("possession"):
             st.markdown(f"**Old per-minute engine vs possession engine on the same {es.get('n', 0):,} player-games**")
             st.dataframe(pd.DataFrame({"per-minute": es["box"], "possession": es["possession"]}).T.round(3),
-                         use_container_width=True)
+                         width="stretch")
         em = r.get("engine_matchups") or {}
         ch = _calib_chart(em.get("calibration"), _g(b, "engine_matchups", "calibration"),
                           f"Simulator: predicted vs real win rate ({em.get('n', 0)} matchups)")
         if ch is not None:
-            st.altair_chart(ch, use_container_width=True)
+            st.altair_chart(ch, width="stretch")
         if box:
             with st.expander("The whole audit with the old per-minute engine (same code, same mock leagues)"):
                 cmp_ = engine_comparison(final, box)
                 num = [c for c in cmp_.columns if c not in ("Metric", "Goal")]
                 st.dataframe(cmp_.style.format({c: lambda v: _fmt(v, "f3") for c in num}, na_rep="–"),
-                             hide_index=True, use_container_width=True)
+                             hide_index=True, width="stretch")
                 st.caption("Per-minute = the engine before the possession simulator, with no per-game projections "
                            "in the season model. Everything else is identical.")
     with t5:
@@ -249,12 +249,12 @@ prediction date. Then the predictions were compared with what really happened in
         lf = _g(r, "league_forecast", "metrics")
         if lf:
             st.markdown("**League forecast** (simulator, 10 mock leagues)")
-            st.dataframe(pd.DataFrame(lf).set_index("checkpoint").round(3).T, use_container_width=True)
+            st.dataframe(pd.DataFrame(lf).set_index("checkpoint").round(3).T, width="stretch")
     with t6:
         sf = _g(r, "season_fppg", "table")
         if sf:
             st.markdown("**Rest-of-season fantasy points per game: error (MAE) after N games**, by method")
-            st.dataframe(pd.DataFrame(sf).round(2), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(sf).round(2), hide_index=True, width="stretch")
             st.caption(f"Best blend weight k in this season: {_g(r, 'season_fppg', 'best_k')}. "
                        "The model blends ESPN's preseason projection with this season's average as (k·prior + n·live)/(k+n).")
 
@@ -267,4 +267,4 @@ prediction date. Then the predictions were compared with what really happened in
         df["result"] = np.where(df.passed, "✅ pass", "❌ FAIL")
         st.dataframe(df[["result", "name", "idea", "detail"]].rename(columns={"name": "test", "idea": "what it does",
                                                                               "detail": "outcome"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")

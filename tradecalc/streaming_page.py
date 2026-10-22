@@ -72,7 +72,7 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
                                                       "Later weeks": "{:+.2f}", "Rival pickup": "{:+.2f}",
                                                       "Total": "{:+.2f}"})
                      .map(lambda v: f"color: {'#16a34a' if v > 0 else '#dc2626'}", subset=["Total"]),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         st.caption("This week = change in this week's win chance. The other columns are changes in expected wins over "
                    "the rest of the season. Waiver order is ESPN's (1 = first claim).")
 
@@ -86,14 +86,14 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
                                                       "This week": lambda v: f"{v * 100:+.0f}%",
                                                       "Later weeks": "{:+.2f}", "Rival pickup": "{:+.2f}",
                                                       "Total": "{:+.2f}"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
 
     st.subheader("Best free agents this week")
     tbl = streamer_table(state, week)
     if len(tbl):
         st.dataframe(tbl.drop(columns=["id"]).style.format({"FPPG": "{:.1f}", "Exp. pts this week": "{:.0f}",
                                                             "Rest-of-season value": "{:,.0f}"}),
-                     hide_index=True, use_container_width=True, height=320)
+                     hide_index=True, width="stretch", height=320)
         st.caption("Exp. pts = points per game × the chance he plays each remaining game this week. "
                    "Rest-of-season value = his expected fantasy points for the rest of the season.")
 
@@ -102,7 +102,7 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
             ls = league_summary(state, week, max_moves=int(moves))
         st.dataframe(ls.style.format({"Extra pts": "{:+.0f}", "Win chance now": _pct, "With moves": _pct,
                                       "Later weeks": "{:+.2f}", "Rival pickups": "{:+.2f}"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         st.caption("Each plan assumes nobody else moves first; popular free agents go to whoever adds them first.")
 
 

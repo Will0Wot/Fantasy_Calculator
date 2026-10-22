@@ -88,7 +88,7 @@ with st.sidebar:
     use_today = st.checkbox("Use today's date", value=True)
     pretend = None if use_today else st.date_input("Pretend today is", value=date(2026, 11, 15)).isoformat()
     if st.button("Refresh data", help="Pull new games, injuries, rosters and this week's scores "
-                                      "(also happens automatically every hour)", use_container_width=True):
+                                      "(also happens automatically every hour)", width="stretch"):
         ago = time.time() - SH["last_refresh"]
         if ago < REFRESH_COOLDOWN_S:
             st.info(f"Data was refreshed {ago / 60:.0f} min ago; try again in "
@@ -214,9 +214,9 @@ with tab_match:
     fmt = {"FPPG": "{:.1f}", "MIN": "{:.1f}", "Exp. pts": "{:.0f}", "Starts": "{:.1f}"}
     l, r = st.columns(2)
     l.subheader("Your lineup")
-    l.dataframe(lineup_df(d1).style.format(fmt), hide_index=True, use_container_width=True)
+    l.dataframe(lineup_df(d1).style.format(fmt), hide_index=True, width="stretch")
     r.subheader("Opponent")
-    r.dataframe(lineup_df(d2).style.format(fmt), hide_index=True, use_container_width=True)
+    r.dataframe(lineup_df(d2).style.format(fmt), hide_index=True, width="stretch")
 
     st.subheader("Rest of season")
     out = season_outlook(ME, state.rosters, state)
@@ -225,7 +225,7 @@ with tab_match:
                            "You": x["M"], "Them": x.get("M_opp"), "Win %": x["p"]} for x in out["weeks"]])
     st.bar_chart(sched.set_index("Week")["Win %"], height=220)
     st.dataframe(sched.style.format({"You": "{:.0f}", "Them": "{:.0f}", "Win %": "{:.0%}"}),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------------------- League forecast
 @st.cache_resource(show_spinner=False, max_entries=6, ttl=3600)
@@ -284,7 +284,7 @@ with tab_league:
     }, index=fc.index)
     show.index.name = "Rank"
     st.dataframe(show.style.format({"Projected wins": "{:.1f}", "Win league": "{:.0%}", "Top 3": "{:.0%}",
-                                    "Last place": "{:.0%}", "Avg finish": "{:.1f}"}), use_container_width=True)
+                                    "Last place": "{:.0%}", "Avg finish": "{:.1f}"}), width="stretch")
     st.caption(f"{fc.attrs['n']:,} simulated seasons · {fc.attrs['weeks_left']} weeks left · "
                f"{'game-by-game engine' if fc.attrs['method'] == 'detailed' else 'season model'} · "
                "no playoffs, so most wins takes the league (ties broken by total points). "
@@ -300,7 +300,7 @@ with tab_league:
             x=alt.X("Finish:O", title="Final rank"), y=alt.Y("Team:N", sort=order, title=None),
             color=alt.Color("Share:Q", scale=alt.Scale(scheme="blues"), legend=alt.Legend(format="%")),
             tooltip=["Team", "Finish", alt.Tooltip("Share:Q", format=".0%")]),
-        use_container_width=True)
+        width="stretch")
 
 # ---------------------------------------------------------------------------- Simulate
 with tab_sim:
@@ -386,13 +386,13 @@ with tab_sim:
                 x=alt.X("Points:Q", bin=alt.Bin(maxbins=60)), y=alt.Y("count()", stack=None, title="Simulations"),
                 color=alt.Color("Team:N", legend=alt.Legend(orient="top"),
                                 scale=alt.Scale(domain=[la, lb], range=["#3b82f6", "#f97316"])))
-            st.altair_chart(hist, use_container_width=True)
+            st.altair_chart(hist, width="stretch")
             diff = pd.DataFrame({"Margin": (A - B)[:k]})
             st.caption(f"Margin ({la} − {lb}): mean {np.mean(A - B):+.0f}, 80% range "
                        f"{np.percentile(A - B, 10):+.0f} to {np.percentile(A - B, 90):+.0f}")
             st.altair_chart(alt.Chart(diff).mark_bar().encode(x=alt.X("Margin:Q", bin=alt.Bin(maxbins=60)),
                                                              y=alt.Y("count()", title="Simulations")).properties(height=160),
-                            use_container_width=True)
+                            width="stretch")
             box = {}
             for (key, d), bm in sims.box_mean.items():
                 box.setdefault(key, []).append(bm)
@@ -411,7 +411,7 @@ with tab_sim:
                 col.dataframe(pd.DataFrame(rows).style.format(
                     {"Active": "{:.0%}", "Starts": "{:.1f}", "MIN": "{:.1f}", "PTS": "{:.1f}", "REB": "{:.1f}",
                      "AST": "{:.1f}", "STL": "{:.1f}", "BLK": "{:.1f}", "TO": "{:.1f}", "FP/G": "{:.1f}",
-                     "FP to team": "{:.0f}"}), hide_index=True, use_container_width=True)
+                     "FP to team": "{:.0f}"}), hide_index=True, width="stretch")
             st.caption("Per-game stat lines are averages over simulations in which the player is active. "
                        "'FP to team' counts only games he is started. 'G' = games left in the simulated days.")
 
@@ -432,7 +432,7 @@ with tab_sim:
                         row[pos] = nm + (" (out)" if nm and _nn(nm) in out_now else "")
                     srows.append(row)
                 with st.expander("Starting lineups used in this simulation (ESPN depth charts, as of today)"):
-                    st.dataframe(pd.DataFrame(srows), hide_index=True, use_container_width=True)
+                    st.dataframe(pd.DataFrame(srows), hide_index=True, width="stretch")
                     st.caption("Listed starters get at least starter minutes; backups are capped by their depth slot. "
                                "Once games are played, real minutes take over. A starter who is out is replaced "
                                "by whoever the simulation gives his minutes to.")
@@ -448,7 +448,7 @@ with tab_sim:
                         row[f"{d:%a %d}"] = ("●" if d in sim_days else "○") if plays else ""
                     row["Left"] = r.games
                     grid.append(row)
-            st.dataframe(pd.DataFrame(grid), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(grid), hide_index=True, width="stretch")
 
     # ---- one NBA game, possession by possession (RotoBot-style)
     st.divider()
@@ -500,15 +500,15 @@ with tab_sim:
                        "BLK": "{:.0f}", "TOV": "{:.0f}", "3PM": "{:.0f}", "FP": "{:.0f}"}
             b1, b2 = st.columns(2)
             b1.markdown(f"**{a}**")
-            b1.dataframe(gd.box(a, i, names).style.format(fmt_box), hide_index=True, use_container_width=True)
+            b1.dataframe(gd.box(a, i, names).style.format(fmt_box), hide_index=True, width="stretch")
             b2.markdown(f"**{h}**")
-            b2.dataframe(gd.box(h, i, names).style.format(fmt_box), hide_index=True, use_container_width=True)
+            b2.dataframe(gd.box(h, i, names).style.format(fmt_box), hide_index=True, width="stretch")
             with st.expander("Every player over all simulations (averages and fantasy-point range)"):
                 fmt_p = {"Plays": "{:.0%}", "MIN": "{:.1f}", "PTS": "{:.1f}", "REB": "{:.1f}", "AST": "{:.1f}",
                          "FP": "{:.1f}", "FP 10%": "{:.0f}", "FP 90%": "{:.0f}"}
                 p1, p2 = st.columns(2)
-                p1.dataframe(gd.players(a, names).style.format(fmt_p), hide_index=True, use_container_width=True)
-                p2.dataframe(gd.players(h, names).style.format(fmt_p), hide_index=True, use_container_width=True)
+                p1.dataframe(gd.players(a, names).style.format(fmt_p), hide_index=True, width="stretch")
+                p2.dataframe(gd.players(h, names).style.format(fmt_p), hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------------------- Trade builder
 with tab_build:
@@ -570,7 +570,7 @@ with tab_build:
                                                  "Change": lambda v: f"{round(v * 100):+d}%"})
                              .map(lambda v: f"color: {'#16a34a' if v > 0 else '#dc2626' if v < 0 else 'inherit'}",
                                   subset=["Change"]),
-                             hide_index=True, use_container_width=True)
+                             hide_index=True, width="stretch")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric(f"{whose} expected wins", f"{r.you.wins_after:.2f}", f"{r.you.d_wins:+.2f}")
         c2.metric(f"{whose} points / week", f"{r.you.pts_after:,.0f}", f"{r.you.d_pts:+.1f}")
@@ -640,7 +640,7 @@ with tab_find:
                             "Note": "" if rs else "No trade helps you that they'd likely accept"})
         sm = pd.DataFrame(summary).sort_values("Best for you", ascending=False, na_position="last")
         st.dataframe(sm.style.format({"Best for you": lambda v: "—" if pd.isna(v) else f"{v:+.2f} wins"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         rows = []
         for partner, rs in res.items():
             for r in rs:
@@ -661,7 +661,7 @@ with tab_find:
                 df = df[df["Partner"].isin(show_p)]
             st.dataframe(df.drop(columns="_r").style.format(
                 {"Your Δ wins": "{:+.2f}", "Their Δ wins": "{:+.2f}", "Your Δ pts/wk": "{:+.1f}"}),
-                hide_index=True, use_container_width=True)
+                hide_index=True, width="stretch")
             st.caption("Open a trade below for the full explanation. You can also rebuild it in the Trade builder.")
             icon = {1: ":green[▲] ", -1: ":red[▼] ", 0: ""}
             for _, row in df.head(20).iterrows():
@@ -695,7 +695,7 @@ with tab_players:
     df = pd.DataFrame(rows).sort_values("ROS value", ascending=False)
     st.dataframe(df.style.format({"FPPG": "{:.1f}", "Prior": "{:.1f}", "MIN": "{:.1f}", "Avail.": "{:.0%}",
                                   "ROS value": "{:,.0f}"}),
-                 hide_index=True, use_container_width=True, height=600)
+                 hide_index=True, width="stretch", height=600)
     rep = ", ".join(f"{k}: {v.name} ({v.mu:.1f})" for k, v in state.replacement.items())
     st.caption(f"Replacement level (best free agent): {rep}")
 
@@ -720,7 +720,7 @@ with tab_inj:
         df = pd.DataFrame(rows).sort_values("ROS value", ascending=False)
         st.dataframe(df.style.format({"FPPG": "{:.1f}", "Now": "{:.0%}", "+30 days": "{:.0%}",
                                       "+90 days": "{:.0%}", "ROS value": "{:,.0f}"}),
-                     hide_index=True, use_container_width=True, height=420)
+                     hide_index=True, width="stretch", height=420)
     st.caption("'Now / +30 / +90 days': chance he plays his team's next game on or after that date.")
 
     st.subheader("Injury corrections")
@@ -734,9 +734,9 @@ with tab_inj:
                    "ask the commissioner to change them (they edit the files in the project and redeploy).")
         c1, c2 = st.columns(2)
         c1.markdown("**Current injury overrides**")
-        c1.dataframe(ov, hide_index=True, use_container_width=True)
+        c1.dataframe(ov, hide_index=True, width="stretch")
         c2.markdown("**Injury history**")
-        c2.dataframe(hi, hide_index=True, use_container_width=True)
+        c2.dataframe(hi, hide_index=True, width="stretch")
     else:
         st.caption("Saved to tradecalc/data/. Overrides change a current injury; history adds a past "
                    "injury the model should know about (blank 'returned' = start of this season).")
@@ -746,12 +746,12 @@ with tab_inj:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Current injury overrides**")
-            ov_new = st.data_editor(ov, num_rows="dynamic", use_container_width=True, key="ov",
+            ov_new = st.data_editor(ov, num_rows="dynamic", width="stretch", key="ov",
                                     column_config={"status": st.column_config.SelectboxColumn(
                                         options=["ACTIVE", "DAY_TO_DAY", "OUT", "OUT_FOR_SEASON"])})
         with c2:
             st.markdown("**Injury history**")
-            hi_new = st.data_editor(hi, num_rows="dynamic", use_container_width=True, key="hi",
+            hi_new = st.data_editor(hi, num_rows="dynamic", width="stretch", key="hi",
                                     column_config={"injury": st.column_config.SelectboxColumn(options=prof_keys)})
         if st.button("Save corrections and recalculate"):
             ov_new.dropna(how="all").to_csv(ov_path, index=False)
@@ -801,7 +801,7 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
                                                          range=["#94a3b8", "#3b82f6"]), legend=alt.Legend(orient="top")),
             tooltip=["Version", "checkpoint", alt.Tooltip("in_80pct_range:Q", format=".0%")])
         rule = alt.Chart(pd.DataFrame({"y": [0.8]})).mark_rule(strokeDash=[6, 4], color="#16a34a").encode(y="y:Q")
-        st.altair_chart((bars + rule).properties(height=260), use_container_width=True)
+        st.altair_chart((bars + rule).properties(height=260), width="stretch")
 
         st.markdown("#### Scorecard")
         pretty = pd.DataFrame({
@@ -815,7 +815,7 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
         st.dataframe(pretty.style.format({
             "Order accuracy (rank corr.)": "{:.2f}", "Naive baseline": "{:.2f}", "Avg miss in wins": "{:.1f}",
             "Before": "{:.1f}", "Inside 80% range": "{:.0%}", "Before ": "{:.0%}", "Champion odds error": "{:.3f}",
-            "Coin flip": "{:.3f}", "Champion in predicted top 3": "{:.0%}"}), hide_index=True, use_container_width=True)
+            "Coin flip": "{:.3f}", "Champion in predicted top 3": "{:.0%}"}), hide_index=True, width="stretch")
         st.caption("Order accuracy: 1 = perfect order, 0 = no better than random. Naive baseline = add up each team's "
                    "preseason projections (plus wins so far, in-season). Champion odds error is a Brier score: lower "
                    "is better, and a 1-in-12 guess for every team scores the coin-flip value.")
@@ -842,7 +842,7 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
         bars_ = alt.Chart(dv).mark_rule(opacity=0.25).encode(x="exp_wins:Q", y="p10:Q", y2="p90:Q",
                                                              color=alt.Color("Result:N", legend=None))
         diag = alt.Chart(pd.DataFrame({"x": lim, "y": lim})).mark_line(strokeDash=[4, 4], color="#64748b").encode(x="x", y="y")
-        st.altair_chart((bars_ + pts + diag).properties(height=380), use_container_width=True)
+        st.altair_chart((bars_ + pts + diag).properties(height=380), width="stretch")
         st.caption(f"Each dot is one team in one mock league ({len(dv)} teams). Vertical lines are the forecast's 80% "
                    f"range; dots on the dashed line were predicted exactly. "
                    f"{dv.inside.mean():.0%} inside the range at this point.")
@@ -857,7 +857,7 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
         st.dataframe(cal.rename(columns={"bucket": "Forecast said 'wins the league'", "teams": "Teams",
                                          "predicted": "Average forecast", "actual": "Actually won"})
                      .style.format({"Average forecast": "{:.0%}", "Actually won": "{:.0%}"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         st.caption("All checkpoints together. Honest odds: teams given ~30% should win about 30% of the time. "
                    "Small groups bounce around, so read the trend rather than single rows.")
 
@@ -874,18 +874,18 @@ fitted on {rep['fit_seasons'][0]} and {rep['fit_seasons'][1]}, so {rep['test_sea
                             "Win league": one.p_first, "Actual wins": one.actual_wins, "Actual rank": one.actual_rank,
                             "Inside range": one["Inside range"]})
         st.dataframe(tbl.style.format({"Projected wins": "{:.1f}", "Win league": "{:.0%}", "Actual wins": "{:.0f}"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         with st.expander("Rosters in this mock league"):
             ros = rep["leagues"][lg]
             st.dataframe(pd.DataFrame({f"Team {i + 1}": r for i, r in enumerate(ros)}), hide_index=True,
-                         use_container_width=True)
+                         width="stretch")
 
         with st.expander("How the season-luck setting was tuned (on the season before)"):
             tu = pd.DataFrame([{"Season form setting": r["talent_sd"],
                                 **{f"Inside 80% · {c}": v for c, v in zip(r["checkpoints"], r["coverage"])}}
                                for r in rep["tuning"]])
             st.dataframe(tu.style.format({c: "{:.0%}" for c in tu.columns if c.startswith("Inside")}),
-                         hide_index=True, use_container_width=True)
+                         hide_index=True, width="stretch")
             st.caption(f"Each setting was tried on mock leagues from {rep['fit_seasons'][1]}; the one closest to 80% "
                        f"overall ({rep.get('chosen_talent_sd')}) is used, then checked on {rep['test_season']} above.")
 

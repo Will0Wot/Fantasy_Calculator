@@ -40,7 +40,7 @@ scorecard. Predictions made before a week starts are never changed afterwards.
         st.subheader("How close so far")
         st.dataframe(sm.style.format({"value": lambda v: f"{v:.3f}" if isinstance(v, float) and abs(v) < 10 else
                                       f"{v:,.1f}" if isinstance(v, float) else v}), hide_index=True,
-                     use_container_width=True)
+                     width="stretch")
 
     st.subheader("Weekly matchups: prediction vs result")
     weeks = sorted(pre.week.unique())
@@ -55,7 +55,7 @@ scorecard. Predictions made before a week starts are never changed afterwards.
     g = g[cols + ["as_of"]].rename(columns=names).sort_values("Win chance", ascending=False)
     st.dataframe(g.style.format({"Projected pts": "{:,.0f}", "± (1 s.d.)": "{:,.0f}", "Win chance": "{:.0%}",
                                  "Actual pts": "{:,.0f}", "Opponent actual": "{:,.0f}", "Won": "{:.1f}"}, na_rep="–"),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
 
     if len(graded):
         a, b = st.columns(2)
@@ -67,7 +67,7 @@ scorecard. Predictions made before a week starts are never changed afterwards.
             y=alt.Y("actual_points:Q", title="Actual points", scale=alt.Scale(domain=lim)),
             color=alt.Color("week:O", title="Week"), tooltip=["week", "team", "proj_points", "actual_points"])
         a.altair_chart((diag + pts).properties(height=300, title="Team points: projected vs actual"),
-                       use_container_width=True)
+                       width="stretch")
         bins = pd.cut(graded.win_prob, [0, .2, .4, .6, .8, 1.0], include_lowest=True)
         cal = graded.groupby(bins, observed=True).agg(predicted=("win_prob", "mean"), actual=("won", "mean"),
                                                       n=("won", "size")).reset_index(drop=True)
@@ -77,7 +77,7 @@ scorecard. Predictions made before a week starts are never changed afterwards.
             y=alt.Y("actual:Q", title="Actually won", scale=alt.Scale(domain=[0, 1]), axis=alt.Axis(format="%")),
             tooltip=["n", alt.Tooltip("predicted:Q", format=".0%"), alt.Tooltip("actual:Q", format=".0%")])
         b.altair_chart((cd + cp).properties(height=300, title="Win chances: predicted vs actual"),
-                       use_container_width=True)
+                       width="stretch")
         st.caption("On the dashed line the model is exactly right; with few weeks graded the dots will bounce around.")
 
     if len(s):
@@ -105,7 +105,7 @@ scorecard. Predictions made before a week starts are never changed afterwards.
                      .style.format({"Proj FPPG": "{:.1f}", "Exp. games": "{:.1f}", "Proj pts": "{:.0f}",
                                     "Games": "{:.0f}", "Actual FPPG": "{:.1f}", "Actual pts": "{:.0f}",
                                     "Proj − actual": "{:+.0f}"}, na_rep="–"),
-                     hide_index=True, use_container_width=True, height=360)
+                     hide_index=True, width="stretch", height=360)
     with st.expander("Raw files"):
         for name, df in t.items():
             if len(df):
