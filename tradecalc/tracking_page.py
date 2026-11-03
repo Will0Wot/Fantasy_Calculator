@@ -9,7 +9,50 @@ import pandas as pd
 from tradecalc import tracking
 
 
-def render(st, season: str) -> None:
+def _luck_color(v) -> str:
+    return "color: #2e9d50" if v > 0.05 else "color: #d1453b" if v < -0.05 else ""
+
+
+def _surprises(items: list, names: dict) -> str:
+    out = []
+    for x in items:
+        opp = names.get(x["opp"], "?")
+        if x["result"] == "lost":
+            out.append(f"Wk {x['week']}: lost to {opp} as a {x['p']:.0%} favorite")
+        elif x["result"] == "won":
+            out.append(f"Wk {x['week']}: beat {opp} as a {x['p']:.0%} underdog")
+        else:
+            out.append(f"Wk {x['week']}: tied {opp} ({x['p']:.0%} to win)")
+    return "; ".join(out)
+
+
+def standings_vs_expected(st, state, predictions: pd.DataFrame) -> None:
+    """The real standings next to the record each team was supposed to have (trade/standings.py luck)."""
+    from tradecalc.trade.standings import luck
+
+    lk = luck(state, predictions)
+    if not (lk.record != "0-0").any():
+        return
+    st.subheader("Standings: actual vs expected record")
+    names = {t: state.team_name(t) for t in state.rosters}
+    show = lk.assign(surprises=lk.surprises.map(lambda x: _surprises(x, names))).rename(columns={
+        "team": "Team", "record": "Record", "exp_record": "Expected record", "vs_expected": "+/−",
+        "surprises": "Weeks that went against the odds", "exp_wins": "Win chances added up",
+        "allplay_wins": "All-play wins", "points_for": "Points for"})
+    cols = ["Team", "Record", "Expected record", "+/−", "Weeks that went against the odds", "Win chances added up",
+            "All-play wins", "Points for"]
+    st.dataframe(show[cols].style.format({"+/−": lambda v: "0" if abs(v) < 1e-9 else f"{v:+g}",
+                                          "Win chances added up": "{:.2f}", "All-play wins": "{:.2f}",
+                                          "Points for": "{:,.0f}"})
+                 .map(_luck_color, subset=["+/−"]), width="stretch", height="content")
+    st.caption("**Expected record:** a win for every week the model favored the team before the week started (win "
+               "chance over 50%), a loss otherwise, so \"supposed to be 2-0, actually 1-1\" means it lost a week it "
+               "was favored in. **+/−:** wins above (green) or below (red) that record. **Win chances added up:** the "
+               "same predictions counted as probabilities (a 60% favorite is 0.6 of a win). **All-play wins:** each "
+               "week, the share of the other teams your score beat. Ties count half; ranked by wins, then points.")
+
+
+def render(st, season: str, state=None) -> None:
     t = tracking.load(season)
     m, p, s = t["matchups"], t["players"], t["standings"]
     st.markdown(f"""
@@ -21,6 +64,8 @@ scorecard. Predictions made before a week starts are never changed afterwards.
     if m.empty:
         st.info("No predictions recorded yet. Run `tradecalc track` (it runs automatically once a day).")
         return
+    if state is not None:
+        standings_vs_expected(st, state, m)
     pre = m[m.kind == "pre-week"].copy()
     graded = pre[pre.get("won").notna()] if "won" in pre else pre.iloc[0:0]
     c1, c2, c3, c4 = st.columns(4)

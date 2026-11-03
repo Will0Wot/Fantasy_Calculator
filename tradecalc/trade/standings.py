@@ -18,6 +18,18 @@ import pandas as pd
 from tradecalc.trade.matchup import week_dist
 
 
+def result_of(m: dict) -> str | None:
+    """HOME, AWAY or TIE for a matchup whose week is over. ESPN can leave it UNDECIDED for hours after
+    the week ends; the point totals decide it then (None if there are no totals yet)."""
+    res = m.get("winner")
+    if res in ("HOME", "AWAY", "TIE"):
+        return res
+    h, a = float(m.get("home_total") or 0.0), float(m.get("away_total") or 0.0)
+    if h == a == 0:
+        return None
+    return "HOME" if h > a else "AWAY" if a > h else "TIE"
+
+
 def _finished_results(state) -> tuple[dict, dict, dict, dict]:
     """Record so far from weeks that are over: wins, losses, ties and points per team."""
     w, l, t, pts = ({tid: 0.0 for tid in state.rosters} for _ in range(4))
@@ -28,7 +40,7 @@ def _finished_results(state) -> tuple[dict, dict, dict, dict]:
         h, a = m["home"], m["away"]
         pts[h] += m.get("home_total", 0.0)
         pts[a] += m.get("away_total", 0.0)
-        res = m.get("winner")
+        res = result_of(m)
         if res == "HOME":
             w[h] += 1; l[a] += 1
         elif res == "AWAY":
@@ -159,3 +171,76 @@ def forecast(state, n: int = 10000, seed: int | None = 0, method: str = "quick",
 
 def last_place_line(df: pd.DataFrame) -> str:
     return f"{df.iloc[-1]['team']} will be eating poop"
+
+
+def luck(state, predictions: pd.DataFrame | None = None) -> pd.DataFrame:
+    """The real standings so far, next to the record each team was expected to have. Ties count tie_value.
+
+      exp_record    a win for every week the model favored the team before the week started (win chance
+                    over 50%), a loss when it was the underdog, a tie for an exact toss-up: "supposed to be
+                    2-0" (the season tracker's frozen predictions: tracking/<season>/matchups.csv, pre-week)
+      vs_expected   wins minus expected wins by that record (+1: won a week it was supposed to lose)
+      surprises     every week that went against the favorite: week, result (won / lost / tied), the
+                    team's pre-week win chance, opponent
+      exp_wins      the same predictions added up as probabilities (a 60% favorite counts 0.6 of a win)
+      luck          wins minus exp_wins, over the weeks that have a prediction
+      allplay_wins  each week, the share of the other teams the team outscored: its record if it had
+                    played everyone (schedule luck: a high score that loses still counts)
+      allplay_luck  wins minus allplay_wins
+    One row per team, ranked like the league: wins, then points scored."""
+    from collections import defaultdict
+
+    tie = state.cfg["league"]["tie_value"]
+    done = {wk.number for wk in state.cal.weeks if wk.end < state.today}
+    pre = {}
+    if predictions is not None and len(predictions):
+        pw = predictions[predictions.kind == "pre-week"] if "kind" in predictions else predictions
+        pre = {(int(w), int(t)): float(p) for w, t, p in zip(pw.week, pw.team_id, pw.win_prob)}
+    rec = {t: {"W": 0, "L": 0, "T": 0, "pf": 0.0, "exp": 0.0, "won_pred": 0.0, "ap": 0.0, "EW": 0, "EL": 0, "ET": 0,
+               "exp_won": 0.0, "surprises": []} for t in state.rosters}
+    scores = defaultdict(dict)
+    for m in getattr(state.league, "matchups", []):
+        res = result_of(m) if m["week"] in done and m.get("away") is not None else None
+        if res is None:
+            continue
+        for me, opp, side, pts in ((m["home"], m["away"], "HOME", m.get("home_total")),
+                                   (m["away"], m["home"], "AWAY", m.get("away_total"))):
+            if me not in rec:
+                continue
+            r = rec[me]
+            won = 1.0 if res == side else tie if res == "TIE" else 0.0
+            r["W"] += res == side
+            r["T"] += res == "TIE"
+            r["L"] += res not in (side, "TIE")
+            r["pf"] += float(pts or 0.0)
+            if (m["week"], me) in pre:
+                p = pre[(m["week"], me)]
+                r["exp"] += p
+                r["won_pred"] += won
+                expected = "won" if p > 0.5 else "lost" if p < 0.5 else None     # None: an exact toss-up
+                r["EW"] += expected == "won"
+                r["EL"] += expected == "lost"
+                r["ET"] += expected is None
+                r["exp_won"] += 1.0 if expected == "won" else tie if expected is None else 0.0
+                outcome = "won" if res == side else "tied" if res == "TIE" else "lost"
+                if expected is not None and outcome != expected:
+                    r["surprises"].append({"week": int(m["week"]), "result": outcome, "p": p, "opp": opp})
+            scores[m["week"]][me] = float(pts or 0.0)
+    for week_scores in scores.values():
+        for t, s in week_scores.items():
+            others = [v for u, v in week_scores.items() if u != t]
+            if others:
+                rec[t]["ap"] += (sum(s > v for v in others) + tie * sum(s == v for v in others)) / len(others)
+    rows = []
+    for t, r in rec.items():
+        wins = r["W"] + tie * r["T"]
+        rows.append({"team_id": t, "team": state.team_name(t),
+                     "record": f"{r['W']}-{r['L']}" + (f"-{r['T']}" if r["T"] else ""), "wins": wins,
+                     "exp_record": f"{r['EW']}-{r['EL']}" + (f"-{r['ET']}" if r["ET"] else ""),
+                     "vs_expected": r["won_pred"] - r["exp_won"],
+                     "surprises": sorted(r["surprises"], key=lambda x: x["week"]),
+                     "exp_wins": r["exp"], "luck": r["won_pred"] - r["exp"], "allplay_wins": r["ap"],
+                     "allplay_luck": wins - r["ap"], "points_for": r["pf"]})
+    df = pd.DataFrame(rows).sort_values(["wins", "points_for"], ascending=False).reset_index(drop=True)
+    df.index = df.index + 1
+    return df

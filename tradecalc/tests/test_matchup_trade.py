@@ -172,3 +172,39 @@ def test_league_forecast_counts_finished_weeks(week_dates):
     fc = forecast(st, n=100, seed=1)
     r1 = fc.set_index("team_id").loc[1]
     assert r1["record"] == "1-0" and r1["p_first"] == 1.0
+
+
+def test_luck_standings_expected_vs_actual_wins(week_dates):
+    from datetime import timedelta
+
+    import pandas as pd
+
+    from tradecalc.trade.standings import luck
+
+    ps = [make_player(t, t, "AAA", ["PG"], 20) for t in range(1, 5)]
+    st = make_state(ps, {week_dates[0]: {"AAA", "ZZZ"}}, n_weeks=2)
+    st.today = week_dates[0] + timedelta(days=14)                  # both weeks are over
+    st.league.matchups = [
+        {"week": 1, "home": 1, "away": 2, "home_total": 1100, "away_total": 1000, "winner": "HOME"},
+        {"week": 1, "home": 3, "away": 4, "home_total": 900, "away_total": 800, "winner": "HOME"},
+        {"week": 2, "home": 1, "away": 3, "home_total": 1000, "away_total": 1000, "winner": "UNDECIDED"},  # a tie
+        {"week": 2, "home": 2, "away": 4, "home_total": 1200, "away_total": 700, "winner": "UNDECIDED"},
+    ]
+    pred = pd.DataFrame({"kind": "pre-week", "week": [1, 1, 1, 1, 2, 2, 2],
+                         "team_id": [1, 2, 3, 4, 1, 3, 2], "win_prob": [0.7, 0.3, 0.4, 0.6, 0.5, 0.5, 0.8]})
+    df = luck(st, pred).set_index("team_id")
+    assert list(df.index) == [1, 3, 2, 4]                           # wins, then points (1 and 3 both 1.5)
+    assert df.loc[1, "record"] == "1-0-1" and df.loc[1, "wins"] == 1.5
+    assert abs(df.loc[1, "exp_wins"] - 1.2) < 1e-9 and abs(df.loc[1, "luck"] - 0.3) < 1e-9
+    # all-play: week 1 team 1 had the top score (3 of 3), week 2 beat 4 and tied 3 (1.5 of 3)
+    assert abs(df.loc[1, "allplay_wins"] - 1.5) < 1e-9 and abs(df.loc[1, "allplay_luck"]) < 1e-9
+    assert abs(df.loc[2, "allplay_wins"] - (2 / 3 + 1)) < 1e-9 and abs(df.loc[2, "luck"] - (1 - 1.1)) < 1e-9
+    assert abs(df.loc[4, "exp_wins"] - 0.6) < 1e-9 and abs(df.loc[4, "luck"] + 0.6) < 1e-9   # no week-2 prediction
+    assert abs(df.wins.sum() - 4) < 1e-9 and abs(df.allplay_wins.sum() - 4) < 1e-9
+    # expected record: a win for every week the team was favored, a tie for an exact toss-up
+    assert (df.loc[1, "exp_record"], df.loc[1, "vs_expected"]) == ("1-0-1", 0.0)  # won as favorite, tied a 50/50
+    assert df.loc[1, "surprises"] == []                                           # a toss-up can't be a surprise
+    assert (df.loc[2, "exp_record"], df.loc[2, "vs_expected"]) == ("1-1", 0.0)    # lost as underdog, won as favorite
+    assert df.loc[2, "surprises"] == []
+    assert (df.loc[3, "exp_record"], df.loc[3, "vs_expected"]) == ("0-1-1", 1.0)  # beat a favorite in week 1
+    assert df.loc[3, "surprises"] == [{"week": 1, "result": "won", "p": 0.4, "opp": 4}]

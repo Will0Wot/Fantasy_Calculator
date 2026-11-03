@@ -1,0 +1,14 @@
+{
+  "name": "fantasy-odds-bot",
+  "private": true,
+  "type": "module",
+  "description": "Discord bot for the fantasy trade calculator: weekly odds and projected standings",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "register": "node --env-file=.env register.mjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

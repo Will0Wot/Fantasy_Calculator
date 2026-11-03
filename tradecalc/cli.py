@@ -410,6 +410,38 @@ def track(excel: str = typer.Option(None, help="Also write the Excel workbook to
         typer.echo(f"Wrote {excel}")
 
 
+@app.command("discord")
+def discord_cmd(post: bool = typer.Option(False, help="Post the week's preview to the channel webhook in "
+                                                       "DISCORD_WEBHOOK_URL if this week's hasn't gone out yet."),
+                force: bool = typer.Option(False, help="With --post: post now even if already posted this week."),
+                preview: bool = typer.Option(False, help="Print the weekly post (JSON) instead of sending it.")):
+    """Discord bot: write the data the bot answers from (discord-bot/data/snapshot.json) and, with
+    --post, the weekly preview for the channel. Run it daily (the GitHub job does)."""
+    import json
+    import os
+
+    from tradecalc import discord_bot as DB
+
+    st = _state()
+    snap = DB.snapshot(st)
+    path = DB.save(snap)
+    typer.echo(f"Saved {path} (week {snap['current_week']}, {len(snap['odds'])} weeks of odds)")
+    if preview:
+        typer.echo(json.dumps(DB.weekly_post(snap), indent=2, ensure_ascii=False))
+    if not post:
+        return
+    url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    if not url:
+        typer.secho("DISCORD_WEBHOOK_URL is not set: weekly post skipped.", fg="yellow")
+        return
+    if not force and not DB.post_due(snap):
+        typer.echo("Weekly post: not due (already posted this week, or mid-week).")
+        return
+    DB.send(DB.weekly_post(snap), url)
+    DB.mark_posted(snap)
+    typer.echo(f"Posted the week {snap['current_week']} preview to Discord.")
+
+
 @app.command()
 def pbp(season: list[str] = typer.Option(["2021-22", "2022-23", "2023-24", "2024-25", "2025-26"], "--season",
                                          help="Seasons to collect (repeatable); the current season is added if games exist.")):

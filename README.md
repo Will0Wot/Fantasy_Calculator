@@ -89,11 +89,20 @@ Notes
 - Refit the simulator every few weeks: `tradecalc sim-fit` (and `tradecalc sim-validate`), then commit and push
   `tradecalc/config/sim_params.yaml` and `validation.json`.
 
+## Discord bot
+
+Posts the standings (next to the record each team was supposed to have), the projected final standings and
+the week's matchup odds in your league's Discord channel at the start of every fantasy week, and answers
+`/odds team opponent`, `/standings`, `/forecast` and `/matchups` anytime, with the app's own numbers. The morning GitHub job refreshes its data (`tradecalc discord`); a free Cloudflare Worker answers
+the commands. One-time setup: [`discord-bot/README.md`](discord-bot/README.md).
+
 ## Season tracker (prediction vs actual)
 
 `.github/workflows/track.yml` runs `tradecalc track` every morning on GitHub Actions (9:17 AM ET,
 before any tip-off) and commits `tracking/<season>/matchups.csv`, `players.csv` and `standings.csv`.
 Predictions made before a week starts are frozen; results are filled in when the week ends. The app's
-**📈 Season tracker** tab shows the running scorecard and downloads everything as one Excel workbook.
+**📈 Season tracker** tab shows the standings next to the record each team was supposed to have (a win for every
+week it was favored), every week that went against the odds, the running scorecard, and downloads everything as
+one Excel workbook.
 Run it by hand from the repo's Actions tab ("Run workflow") or locally with `tradecalc track`.
 

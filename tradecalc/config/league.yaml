@@ -137,3 +137,6 @@ data:
   cache_db: data/cache.sqlite
   nba_min_request_interval_s: 1.0     # stats.nba.com rate limit
   espn_cache_ttl_hours: 1           # rosters, injuries and this week's scores refresh hourly
+
+discord:
+  app_url: ""                         # link to the Streamlit app for the weekly Discord post (optional)

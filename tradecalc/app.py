@@ -916,7 +916,7 @@ with tab_track:
     from tradecalc import tracking_page
 
     st.header("Season tracker: prediction vs actual")
-    tracking_page.render(st, cfg["league"]["nba_season"])
+    tracking_page.render(st, cfg["league"]["nba_season"], state)
 
 # ---------------------------------------------------------------------------- Model audit
 DOCS = Path(__file__).resolve().parent.parent / "docs"

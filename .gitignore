@@ -10,3 +10,9 @@ __pycache__/
 tradecalc/data/cache.sqlite
 tradecalc/data/injury_reports/raw/
 tradecalc/data/pbp/
+
+# Discord bot (discord-bot/): local secrets and tooling
+discord-bot/.env
+discord-bot/.dev.vars
+discord-bot/node_modules/
+discord-bot/.wrangler/

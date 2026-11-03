@@ -1,0 +1,10 @@
+# Cloudflare Worker for the Discord bot. Deploy with `npm run deploy` (see README.md).
+name = "fantasy-odds-bot"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# The data the bot answers from, committed every morning by the GitHub job (tradecalc discord).
+SNAPSHOT_URL = "https://raw.githubusercontent.com/Will0Wot/Fantasy_Calculator/main/discord-bot/data/snapshot.json"
+
+# Set once with: npx wrangler secret put DISCORD_PUBLIC_KEY   (the app's Public Key from the Discord Developer Portal)

@@ -1,13 +1,20 @@
 # Every morning: fetch last night's play-by-play for the possession simulator, simulate every NBA game
 # left this season for the per-game projections (data/possession/), record the model's predictions before
-# the day's games and fill in results for finished weeks (tracking/<season>/*.csv), then commit both so
-# the app stays up to date. See tradecalc/sim/possession/ and tradecalc/tracking.py.
+# the day's games and fill in results for finished weeks (tracking/<season>/*.csv), refresh the Discord
+# bot's data and post the weekly preview when a fantasy week starts (discord-bot/data/), then commit it
+# all so the app and the bot stay up to date. See tradecalc/sim/possession/, tradecalc/tracking.py and
+# tradecalc/discord_bot.py.
 name: Season tracker
 
 on:
   schedule:
     - cron: "17 13 * * *"     # 13:17 UTC = 9:17 AM Eastern (8:17 in winter), before any tip-off
   workflow_dispatch:           # "Run workflow" button in the Actions tab
+    inputs:
+      discord_post_now:
+        description: "Post this week's Discord preview now (even if it already went out)"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths: [".github/workflows/track.yml"]
@@ -49,11 +56,20 @@ jobs:
       - name: Record predictions and results
         run: python -m tradecalc.cli track
 
+      # The Discord bot's data, and at the start of each fantasy week the preview post (needs the
+      # DISCORD_WEBHOOK_URL repository secret; skipped without it). A failed post never blocks the
+      # commit below, and is retried the next morning.
+      - name: Discord bot data and weekly post
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python -m tradecalc.cli discord --post ${{ inputs.discord_post_now && '--force' || '' }}
+
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tracking/ tradecalc/data/possession/
+          git add tracking/ tradecalc/data/possession/ discord-bot/data/
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Season tracker: predictions and results $(date -u +%F)"
           git pull --rebase origin main
