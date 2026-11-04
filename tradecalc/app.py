@@ -90,9 +90,43 @@ def _ref_from_url() -> LeagueRef:
     return HOME
 
 
+def _secrets():
+    try:
+        return st.secrets
+    except Exception:  # noqa: BLE001 - no secrets file locally
+        return None
+
+
+def _yahoo_return() -> None:
+    """Back from Yahoo's sign-in page (?code=...&state=...): swap the code for a token, kept in this
+    session only, then open the league the visitor asked for (carried in the signed state)."""
+    code, state = st.query_params.get("code"), st.query_params.get("state")
+    if not (code and state):
+        return
+    from tradecalc.platforms.yahoo import exchange_code, oauth_config, verify_state
+
+    oauth = oauth_config(_secrets())
+    data = verify_state(oauth, state) if oauth else None
+    st.query_params.clear()
+    if data is None:
+        st.error("That Yahoo sign-in link expired or didn't come from this app. Sign in again.")
+        return
+    try:
+        st.session_state["yahoo_token"] = exchange_code(oauth, code)
+    except Exception as e:  # noqa: BLE001
+        st.error(str(e))
+        return
+    if data.get("league"):
+        st.query_params.update({"platform": "yahoo", "league": str(data["league"])})
+    st.rerun()
+
+
+_yahoo_return()
 REF = _ref_from_url()
 IS_HOME = (REF.platform, REF.league_id) == (HOME.platform, HOME.league_id)
 CREDS = st.session_state.get("creds", {}).get(REF.key) or Credentials()
+if REF.platform == "yahoo":
+    CREDS = Credentials(yahoo_token=st.session_state.get("yahoo_token") or {})
 
 
 def league_picker(expanded: bool = False) -> None:
@@ -114,7 +148,8 @@ def league_picker(expanded: bool = False) -> None:
                 new = Credentials(st.text_input("espn_s2", type="password", key="pick_s2"),
                                   st.text_input("SWID", type="password", key="pick_swid"))
         elif plat == "yahoo":
-            st.caption("Yahoo leagues need you to sign in with Yahoo (coming soon).")
+            if _yahoo_picker(text):
+                return
         if st.button("Open league", type="primary", width="stretch"):
             try:
                 r = parse_league_input(text, plat)
@@ -137,6 +172,46 @@ def league_picker(expanded: bool = False) -> None:
             st.rerun()
 
 
+def _yahoo_picker(text: str) -> bool:
+    """Yahoo needs a sign-in first; once signed in, the visitor picks from their own leagues. True when
+    this replaced the usual Open button."""
+    from tradecalc.platforms.yahoo import YahooClient, auth_url, oauth_config, sign_state, user_leagues
+
+    oauth = oauth_config(_secrets())
+    if oauth is None:
+        st.caption("Yahoo sign-in isn't set up on this server yet (the site owner registers a Yahoo app: "
+                   "see tradecalc/platforms/yahoo.py).")
+        return True
+    token = st.session_state.get("yahoo_token")
+    if not token:
+        lid = ""
+        try:
+            lid = parse_league_input(text, "yahoo").league_id if text else ""
+        except ValueError:
+            pass
+        st.link_button("Sign in with Yahoo", auth_url(oauth, sign_state(oauth, {"league": lid})), width="stretch")
+        st.caption("Yahoo only shares a league with its members, so sign in with your Yahoo account. The app keeps "
+                   "the sign-in for this browser session only and can only read your leagues.")
+        return True
+    if "yahoo_leagues" not in st.session_state:
+        try:
+            st.session_state.yahoo_leagues = [lg for lg in user_leagues(YahooClient(token, oauth))]
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Couldn't list your Yahoo leagues: {e}")
+            return True
+    leagues = st.session_state.yahoo_leagues
+    if not leagues:
+        st.caption("No NBA leagues on this Yahoo account this season.")
+        return True
+    pick = st.selectbox("Your Yahoo leagues", leagues, format_func=lambda lg: f"{lg['name']} ({lg['scoring_type']})",
+                        key="pick_yahoo")
+    if st.button("Open league", type="primary", width="stretch", key="open_yahoo"):
+        st.query_params.clear()
+        st.query_params.update({"platform": "yahoo", "league": str(pick["league_id"])})
+        st.rerun()
+    return True
+
+
 @st.cache_resource
 def shared() -> dict:
     """Per league: manual-refresh counter and time of the last manual refresh."""
@@ -156,10 +231,13 @@ def get_state(league_key: str, today: str, nonce: int, creds_key: str, _ref: Lea
 
 
 def _creds_key(c: Credentials) -> str:
+    """A hash of the visitor's login (never the login itself) to key cached private-league data."""
     import hashlib
 
     ck = c.espn_cookies()
-    return hashlib.sha256(repr(sorted(ck.items())).encode()).hexdigest()[:16] if ck else ""
+    who = (repr(sorted(ck.items())) if ck else "") + str(c.yahoo_token.get("xoauth_yahoo_guid")
+                                                         or c.yahoo_token.get("refresh_token") or "")
+    return hashlib.sha256(who.encode()).hexdigest()[:16] if who else ""
 
 
 SH = shared()
