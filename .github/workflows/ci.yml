@@ -1,0 +1,46 @@
+# Tests on every push and pull request: the Python suite (model, platforms, app logic; no network)
+# and the Discord bot's Worker tests. A red check means don't merge or deploy.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt pytest
+      - name: Tests
+        run: python -m pytest -q
+      - name: The app runs on the demo league (pull requests and main; needs ESPN/NBA data, ~5 min)
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+        run: python -m pytest -q tradecalc/tests/test_app_smoke.py
+        env:
+          TRADECALC_APP_SMOKE: "1"
+
+  discord-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Worker tests
+        working-directory: discord-bot
+        run: node --test

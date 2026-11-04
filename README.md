@@ -1,7 +1,30 @@
 # tradecalc
 
-Fantasy basketball trade calculator for ESPN league 1331882803 (H2H points, 24 weeks, no playoffs).
-Every league setting lives in `tradecalc/config/league.yaml`.
+Fantasy basketball calculator for **head-to-head points leagues on ESPN, Sleeper and Yahoo**:
+matchup odds, the league forecast, trade builder and finder, a streaming planner, player values and injuries.
+Each league's own rules (scoring, lineup slots, weeks, ties, pickup limits) are read from its site. The default
+league is ESPN league 1331882803; `tradecalc/config/league.yaml` holds the model settings and that league's ID.
+
+## Use it for your league
+
+Open the app, then **🏀 Open a league** in the sidebar:
+
+| Site | What to enter | Private leagues |
+|---|---|---|
+| ESPN | the league ID, or paste your league page's link | add your `espn_s2` and `SWID` cookies (shown how in the app) |
+| Sleeper | the league ID or link | none needed: Sleeper leagues are public |
+| Yahoo | **Sign in with Yahoo**, then pick one of your leagues | Yahoo only shows a league to its members |
+| (none) | **Try the demo league** | |
+
+Pick your team and bookmark the page: the link (`?platform=…&league=…&team=…`) opens straight to it. Category and
+roto leagues are recognized and explained, but not modeled yet.
+
+**Privacy.**
+
+- ESPN cookies and Yahoo sign-ins stay in your browser session; the app never saves them.
+- League data fetched with them is cached on the server for up to an hour, under a hash of the login, so it's
+  only ever shown to someone holding the same login.
+- Public league data (team names, rosters, scores) is cached the same way for everyone.
 
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -68,6 +91,19 @@ games played and volatility. Research, sources and derivations: `docs/injury_res
 .venv/bin/pytest
 ```
 
+## Development and releases
+
+- **Branches.** Work happens on a branch (e.g. `dev/multi-league`) and is merged to `main` only when the tests
+  pass. `main` is what Streamlit Cloud serves, and the daily tracker job also commits to it.
+- **Tests.** `.venv/bin/pytest` runs the suite: model, platform adapters on recorded responses, streaming and
+  trade rules. It takes seconds and needs no network.
+  `TRADECALC_APP_SMOKE=1 .venv/bin/pytest tradecalc/tests/test_app_smoke.py` runs the whole app on the demo
+  league with real data.
+- **CI** (`.github/workflows/ci.yml`) runs the suite and the Discord bot's tests on every push. On pull requests
+  and `main` it also runs the app smoke test.
+- **Model changes** are backtested before they ship: `tradecalc audit`, with the results written up in
+  `docs/model_audit.md`. The plan and its status are in `docs/production_plan.md`.
+
 ## Deploying for the league (Streamlit Community Cloud)
 
 1. Push this folder to a GitHub repository (private is fine).
@@ -85,7 +121,14 @@ Notes
 - League data is rebuilt at least hourly (cache expiry), or right away with **Refresh data**.
 - On the hosted copy, injury corrections are read-only. To change them, edit
   `tradecalc/data/injury_overrides.csv` / `injury_history.csv` locally, commit and push; the app redeploys.
-- If the league goes private, add `ESPN_S2` and `SWID` under the app's *Settings → Secrets*.
+- If the default league goes private, add `ESPN_S2` and `SWID` under the app's *Settings → Secrets*. Visitors'
+  own private leagues use their own cookies instead.
+- **Yahoo sign-in** needs a free Yahoo developer app, set up once:
+  1. Go to <https://developer.yahoo.com/apps/create/> and create a **Web Application**.
+  2. Set the **Redirect URI** to the app's address (e.g. `https://your-app.streamlit.app/`), and give it
+     **Fantasy Sports: Read** permission.
+  3. Add `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET` and `YAHOO_REDIRECT_URI` (the same address) to the app's
+     secrets. Without them, the Yahoo option says it isn't set up.
 - Refit the simulator every few weeks: `tradecalc sim-fit` (and `tradecalc sim-validate`), then commit and push
   `tradecalc/config/sim_params.yaml` and `validation.json`.
 

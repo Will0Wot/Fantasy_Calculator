@@ -19,9 +19,10 @@ import streamlit as st  # noqa: E402
 
 st.set_page_config(page_title="Trade Calculator", page_icon="🏀", layout="wide")
 
-# ESPN cookies for a private league can be supplied as Streamlit secrets (ESPN_S2, SWID).
+# Streamlit secrets -> environment: ESPN cookies for the default league if it's private (ESPN_S2, SWID), and
+# the Yahoo developer app that lets visitors sign in with Yahoo (YAHOO_CLIENT_ID, _SECRET, _REDIRECT_URI).
 try:
-    for _k in ("ESPN_S2", "SWID"):
+    for _k in ("ESPN_S2", "SWID", "YAHOO_CLIENT_ID", "YAHOO_CLIENT_SECRET", "YAHOO_REDIRECT_URI"):
         if _k in st.secrets and not os.environ.get(_k):
             os.environ[_k] = str(st.secrets[_k])
 except Exception:  # no secrets file locally
@@ -133,6 +134,7 @@ def league_picker(expanded: bool = False) -> None:
     """Sidebar: open another league from ESPN, Sleeper or Yahoo by ID or link."""
     with st.sidebar.expander("🏀 Open a league", expanded=expanded):
         plat = st.selectbox("Site", list(PLATFORMS), format_func=PLATFORMS.get, key="pick_platform",
+                            index=list(PLATFORMS).index(REF.platform) if REF.platform in PLATFORMS else 0,
                             help="Only needed for a bare ID; a pasted link tells the app which site it's from.")
         text = st.text_input("League ID or link", key="pick_league",
                              placeholder="e.g. 1331882803, or paste the league's page link")

@@ -6,6 +6,19 @@ config, fitted parameters and saved validation results, so the text stays accura
 from __future__ import annotations
 
 
+def _site(cfg) -> str:
+    from tradecalc.platforms import PLATFORMS
+
+    return PLATFORMS.get(cfg["league"].get("platform", "espn"), "the demo")
+
+
+def _limit(s) -> str:
+    if s.get("moves_unlimited"):
+        return "Your league has no weekly pickup limit; the planner plans up to 4 moves."
+    n = s.get("moves_per_week", 1)
+    return f"Your league allows {n} pickup{'s' if n != 1 else ''} per matchup; you can plan for more."
+
+
 def _pct(x, d=0):
     return "n/a" if x is None else f"{x * 100:.{d}f}%"
 
@@ -36,8 +49,8 @@ and the same for every remaining week.
    something.
 5. **Win chance.** Your expected total and how much it could swing are compared with your opponent's.
 
-**Dates:** only days from today onward are projected. Days already played this week use the real points ESPN
-recorded.
+**Dates:** only days from today onward are projected. Days already played this week use the real points your
+league's site ({_site(cfg)}) recorded.
 
 **Injuries here:** a player who is out counts as 0 until his expected return. A day-to-day player is treated as a
 coin flip for his next game. A player coming back from a major injury gets fewer expected games and a slightly
@@ -54,7 +67,8 @@ def league_forecast(cfg) -> str:
 projected number of wins.
 
 **How it's calculated**
-1. **Weeks already played** use the real results from ESPN. This week's points so far are counted.
+1. **Weeks already played** use the real results from your league's site ({_site(cfg)}). This week's points so far
+   are counted.
 2. **Every remaining week,** each team's score is simulated:
    - *Detailed:* every NBA game is played out (minutes, injuries, rest, teammates, opponents), and each team
      starts its best lineup each day.
@@ -426,7 +440,7 @@ weakest roster spot for the free agent who helps most *this week*.
    with the free agent instead of the player you dropped), and *rival pickup* (a rival claiming your dropped
    player and using him against you). A move is suggested only if the total is positive, so the plan won't drop a
    good player for a one-week rental.
-5. **League limit.** ESPN allows {s.get('moves_per_week', 1)} pickup per matchup in this league; you can plan for more.
+5. **League limit.** {_limit(s)}
 
 **Good to know:** everyone sees the same free agents, so if your top choice gets picked up, use the next option
 in the list. Plans refresh with the data (hourly), so check again before you make the move.

@@ -1,6 +1,6 @@
 # Production plan: any league, any platform
 
-Status: **in progress** on branch `dev/multi-league`. The live app keeps running from `main` until each phase
+Status: phases 1–5 built and tested on branch `dev/multi-league` (November 2026); see §7. The live app keeps running from `main` until each phase
 passes its tests and is merged.
 
 ## 1. Goal
@@ -124,3 +124,20 @@ Later:
   `docs/model_audit.md`.
 - An app smoke test (Streamlit AppTest) for each platform, using fixture leagues.
 - CI runs all of it on every push.
+
+## 7. Status (3 Nov 2026)
+
+| Phase | State | Tested how |
+|---|---|---|
+| 1. Sound recommendations | Done | Backtests on 2021-22 to 2025-26 (`docs/model_audit.md` §10); all 12 teams' streaming plans and the trade finder rerun on live data |
+| 2. Platform layer | Done | ESPN's settings for the home league match `league.yaml` exactly; unit tests |
+| 3. Multi-league app | Done | App smoke test on the demo league (first visit, team pick, every tab), cache keys per league, private-league isolation |
+| 4. Sleeper | Built | Offline tests on recorded-shape responses; 478 of 554 active Sleeper players match ESPN's pool. **Needs a live league to confirm the scoring keys.** |
+| 5. Yahoo | Built | Offline tests on documented-shape XML; sign-in flow tested in the app. **Needs a Yahoo developer app and a live league.** |
+| 6. Hardening | Mostly | CI, clear errors, per-league caches. Memory: about 1.25 GB for the first league, about 20 MB for each more. |
+
+**Not built yet:**
+
+- category and roto leagues;
+- the season tracker and Discord bot for leagues other than the home league (both need a database);
+- Fantrax.
