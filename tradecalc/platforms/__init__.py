@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from tradecalc.platforms.base import LeagueNotFound, LeagueSettings, UnsupportedLeague
 
 PLATFORMS = {"espn": "ESPN", "sleeper": "Sleeper", "yahoo": "Yahoo"}
+DEMO = None   # set below: the demo league (platforms/demo.py)
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,10 @@ def load(ref: LeagueRef, conn, cfg, creds: Credentials | None = None, force: boo
         return load_league(client, force=force)
     if nba is None:
         nba = nba_context(conn, cfg, force)
+    if ref.platform == "demo":
+        from tradecalc.platforms.demo import load_demo
+
+        return load_demo(ref, conn, cfg, nba)
     if ref.platform == "sleeper":
         from tradecalc.platforms.sleeper import load_sleeper
 
@@ -172,5 +177,7 @@ def league_config(base, meta: LeagueSettings):
     return cfg
 
 
-__all__ = ["LeagueRef", "Credentials", "LeagueSettings", "LeagueNotFound", "UnsupportedLeague", "PLATFORMS",
+DEMO = LeagueRef("demo", "demo")
+
+__all__ = ["DEMO", "LeagueRef", "Credentials", "LeagueSettings", "LeagueNotFound", "UnsupportedLeague", "PLATFORMS",
            "parse_league_input", "load", "league_config", "home_ref", "nba_context"]

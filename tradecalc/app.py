@@ -68,8 +68,8 @@ def _et(ts: float, fmt: str) -> str:
 # --- league (any platform) and state (shared by every visitor of that league) -----------------
 
 from tradecalc.config import load_config  # noqa: E402
-from tradecalc.platforms import (PLATFORMS, Credentials, LeagueNotFound, LeagueRef, UnsupportedLeague,  # noqa: E402
-                                 home_ref, parse_league_input)
+from tradecalc.platforms import (DEMO, PLATFORMS, Credentials, LeagueNotFound, LeagueRef,  # noqa: E402
+                                 UnsupportedLeague, home_ref, parse_league_input)
 
 HOME = home_ref(load_config())
 
@@ -78,6 +78,8 @@ def _ref_from_url() -> LeagueRef:
     """The league in the link (?platform=espn&league=123), else the home league. Old links with only
     ?team= keep opening the home league."""
     plat, lid = st.query_params.get("platform"), st.query_params.get("league")
+    if plat == "demo":
+        return DEMO
     if plat and lid:
         try:
             r = parse_league_input(lid, plat)
@@ -124,6 +126,11 @@ def league_picker(expanded: bool = False) -> None:
             st.query_params.clear()
             if (r.platform, r.league_id) != (HOME.platform, HOME.league_id):
                 st.query_params.update(r.query())
+            st.rerun()
+        if REF != DEMO and st.button("Try the demo league", width="stretch",
+                                     help="12 teams drafted by the computer, real NBA games and box scores."):
+            st.query_params.clear()
+            st.query_params.update(DEMO.query())
             st.rerun()
         if not IS_HOME and st.button("Back to the default league", width="stretch"):
             st.query_params.clear()
@@ -214,7 +221,7 @@ _tc2.caption("Pick your team — every tab switches to it. Bookmark the link to 
 with st.sidebar:
     meta = state.league.meta
     st.caption(f"League: {meta.name if meta else state.league.settings.get('name', '')} · "
-               f"{PLATFORMS.get(REF.platform, REF.platform)} · {len(team_ids)} teams")
+               f"{PLATFORMS.get(REF.platform, REF.platform.title())} · {len(team_ids)} teams")
     st.caption(f"Model date: {state.today:%b %d, %Y}")
     if SH["last_refresh"].get(REF.key):
         st.caption(f"Last manual refresh: {_et(SH['last_refresh'][REF.key], '%b %d %H:%M')}")
