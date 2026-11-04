@@ -3,8 +3,9 @@
 A HistLeague is a mock 12-team league on a past season. At a checkpoint (start of fantasy
 week c) it can build a LeagueState that the real trade calculator code (trade/evaluate.py,
 trade/matchup.py) runs on unchanged, using only information known at that date:
-  mu     the season model's blend: (k * prior + n * live) / (k + n), with prior = ESPN's
-         preseason projection per game (last season's FPPG if none), live = FPPG so far
+  mu     the season model: minutes x points per minute, each moved from the prior toward this season's
+         games (model/blend.py), with prior = ESPN's preseason projection per game (last season's FPPG
+         if none) and its minutes
   sigma  shrunk per-game spread; availability = games-played rate so far, shrunk to last season's
 Real outcomes come from real box scores: each team, each day, starts its best available
 players (greedy by position group, ranked by FPPG through the previous day).
@@ -60,6 +61,7 @@ class SeasonCtx:
     logs: pd.DataFrame           # this season's player-games (key, d, team, fp, ...)
     prev_fppg: pd.Series
     prev_rate: pd.Series         # last season games / 82
+    prev_mpg: pd.Series          # last season minutes per game
     games_by_day: dict
     pos_of: callable
     day_data: dict = field(default_factory=dict)   # date -> {key: (fp, prio)}
@@ -81,6 +83,7 @@ def season_ctx(H, client, season: str) -> SeasonCtx:
     P = P.assign(key=P.player_name.map(norm_name))
     prev_fppg = P.groupby("key")["fp"].mean()
     prev_rate = (P.groupby("key").size() / 82).clip(upper=0.95)
+    prev_mpg = P[P["min"] > 0].groupby("key")["min"].mean()
     tl = H.team_logs[H.team_logs.season == season]
     gbd = defaultdict(set)
     for d_, t in zip(tl.game_date, tl.team):
@@ -91,7 +94,7 @@ def season_ctx(H, client, season: str) -> SeasonCtx:
     L["prio"] = np.where(L.cum_n > 0, L.cum_fp / L.cum_n.clip(lower=1), L.key.map(prev_fppg).fillna(20.0))
     day_data = {d_: dict(zip(g.key, zip(g.fp, g.prio))) for d_, g in L.groupby("d")}
     proj_gp = {k: pr.get("GP") for k, pr in PRESEASON_PROJ.items()}
-    return SeasonCtx(season, weeks, sched, values, proj_fp, proj_gp, L, prev_fppg, prev_rate, dict(gbd),
+    return SeasonCtx(season, weeks, sched, values, proj_fp, proj_gp, L, prev_fppg, prev_rate, prev_mpg, dict(gbd),
                      lambda k: H.pos_of(k) or "F", day_data, P.sort_values("game_date").groupby("key")["team"].last().to_dict())
 
 
@@ -138,6 +141,23 @@ def _team_dates(ctx: SeasonCtx) -> dict:
     return out
 
 
+def _season_mu(ctx: SeasonCtx, stats: pd.DataFrame, m) -> pd.Series:
+    """The live model's projection (model/blend.py: minutes x points per minute) for every player with
+    games before the checkpoint. Prior: ESPN's preseason projection (else last season's FPPG); its minutes:
+    ESPN's projected minutes (else last season's)."""
+    from tradecalc.model.blend import blend_minutes
+
+    keys = stats.index
+    prior = pd.Series({k: ctx.proj_fp.get(k, ctx.prev_fppg.get(k, 15.0)) for k in keys}, dtype=float)
+    pmin = pd.Series({k: (PRESEASON_PROJ.get(k, {}).get("MIN") if k in ctx.proj_fp else None) or ctx.prev_mpg.get(k, np.nan)
+                      for k in keys}, dtype=float)
+    live = pd.DataFrame({"n": stats.n, "live_fppg": stats.live, "mpg_season": stats.mins, "mpg_last5": stats.mins5,
+                         "fppg_recent": stats.live})
+    b = blend_minutes(prior, pmin, live, minutes_k=m["minutes_k"], rate_k=m["rate_k"],
+                      recent_weight=m["recent_minutes_weight"], k_fallback=m["k"])
+    return b["blended_fppg"]
+
+
 def player_table(ctx: SeasonCtx, cfg, today: date, rostered: dict) -> pd.DataFrame:
     """Every player the model would know about on `today`: projection (mu), games so far (n),
     availability before streak adjustment (base) and games missed in a row (streak).
@@ -147,6 +167,8 @@ def player_table(ctx: SeasonCtx, cfg, today: date, rostered: dict) -> pd.DataFra
     before = ctx.logs[ctx.logs.d < today]
     stats = before.groupby("key").agg(n=("fp", "size"), live=("fp", "mean"), sd=("fp", "std"), team=("team", "last"),
                                       last_d=("d", "max"), mins=("min", "mean"))
+    stats["mins5"] = before.groupby("key")["min"].apply(lambda x: x.tail(5).mean())
+    mu_live = _season_mu(ctx, stats, m)
     first_team = ctx.logs.groupby("key")["team"].first()
     known = set(stats.index) | set(ctx.proj_fp) | set(rostered)
     team_dates = _team_dates(ctx)
@@ -158,8 +180,7 @@ def player_table(ctx: SeasonCtx, cfg, today: date, rostered: dict) -> pd.DataFra
         if team is None or team not in team_dates:
             continue
         prior = ctx.proj_fp.get(k, ctx.prev_fppg.get(k, 15.0))
-        live = float(stats.live[k]) if n else 0.0
-        mu = (m["k"] * prior + n * live) / (m["k"] + n)
+        mu = float(mu_live[k]) if n else prior
         rate_prev = float(ctx.prev_rate.get(k, 0.85))
         tp = team_played.get(team, 0)
         if m.get("availability_calibration"):

@@ -245,6 +245,12 @@ def injury_view(
         p = ic.profiles[v.current]
         v.rtp = p.rtp
         v.typical_days = p.typical_days
+        if v.return_date is not None and p.typical_days and p.rtp < 1:
+            # The profile's chance of never returning this season is for the whole recovery; with a
+            # return date set, only the part still ahead is at risk (a player on a rehab assignment,
+            # back in 5 days, isn't 25% likely to miss the season).
+            ahead = min(max((v.return_date - today).days, 0) / p.typical_days, 1.0)
+            v.rtp = 1 - (1 - p.rtp) * ahead
         back = v.return_date or (today + timedelta(days=p.typical_days))
         mods += _windows(HistoryEntry(v.current, max(back, today), "current"), p)
         if v.current in ic.major:
@@ -252,7 +258,7 @@ def injury_view(
             sigma *= p.year1["sigma"]
         if v.current != "other":
             v.notes.append(f"{p.label}" + (f", back ~{v.return_date:%b %d}" if v.return_date else "")
-                           + (f", P(returns this season) {p.rtp:.0%}" if p.rtp < 0.95 else ""))
+                           + (f", P(returns this season) {v.rtp:.0%}" if v.rtp < 0.95 else ""))
     for e in entries:
         p = ic.profiles[e.profile]
         ph = _phase(e, p, today)

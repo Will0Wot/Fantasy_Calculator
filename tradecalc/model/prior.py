@@ -50,17 +50,26 @@ def fit_adp_curve(adp: pd.DataFrame, actual: pd.DataFrame, min_games: int = 10) 
     return AdpCurve(iso, int(a["adp_rank"].max()))
 
 
+def undrafted(adp: pd.Series, rank: pd.Series) -> pd.Series:
+    """True where an ADP says nothing about the player. ESPN gives every player who goes undrafted
+    in its mock drafts an ADP near the last pick, so past the end of a draft hundreds of players
+    share ADPs of 130-150 (476 of them in 2026-27) and ranking them by ADP is noise: a 27-FPPG
+    starter at 139.8 would rank 400th and read 11 FPPG off the curve. In a real ADP, rank ≈ ADP."""
+    return rank > 1.1 * adp + 5
+
+
 def prior_table(adp: pd.DataFrame, curve: AdpCurve, projections: dict[str, float] | None = None) -> pd.DataFrame:
     """Prior FPPG per player (indexed by normalized name).
 
-    projections: {player name: projected FPPG under league scoring}. Players with a projection
-    but no ADP get the average of the tail curve value and their projection.
+    projections: {player name: projected FPPG under league scoring}. The curve value is missing
+    (not the tail value) for players with no ADP or an undrafted one, so it doesn't drag down a
+    projection that says otherwise; prior_fppg averages whichever of the two exist.
     """
     t = pd.DataFrame({
         "name": adp["name"],
         "adp": adp["adp"],
         "adp_rank": adp["adp_rank"],
-        "curve_fppg": curve(adp["adp_rank"]),
+        "curve_fppg": np.where(undrafted(adp["adp"], adp["adp_rank"]), np.nan, curve(adp["adp_rank"])),
     })
     t["key"] = t["name"].map(norm_name)
     t = t.drop_duplicates("key").set_index("key")
@@ -68,9 +77,7 @@ def prior_table(adp: pd.DataFrame, curve: AdpCurve, projections: dict[str, float
         proj = pd.Series({norm_name(k): v for k, v in projections.items()}, name="proj_fppg")
         t = t.join(proj, how="outer")
         t["name"] = t["name"].fillna(pd.Series({norm_name(k): k for k in projections}))
-        t["curve_fppg"] = t["curve_fppg"].fillna(curve.tail_value)
-        t["prior_fppg"] = np.where(t["proj_fppg"].notna(), (t["curve_fppg"] + t["proj_fppg"]) / 2, t["curve_fppg"])
     else:
         t["proj_fppg"] = np.nan
-        t["prior_fppg"] = t["curve_fppg"]
+    t["prior_fppg"] = t[["curve_fppg", "proj_fppg"]].mean(axis=1, skipna=True).fillna(curve.tail_value)
     return t

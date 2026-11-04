@@ -68,7 +68,10 @@ weeks:
   overrides: {}
 
 model:
-  k: 6                       # shrinkage games for prior vs live (tuned in backtest)
+  k: 6                       # shrinkage games for prior vs live (tuned in backtest); only for players without prior minutes
+  minutes_k: 6               # FPPG = minutes x points per minute: the prior's minutes are worth 6 games,
+  rate_k: 20                 # its points per minute 20 games (shooting luck evens out slowly). Fitted and
+  recent_minutes_weight: 0.25  # tested out of sample on 2022-23..2025-26 (docs/model_audit.md §10)
   role_change_threshold: 0.20 # |mpg_last5 - mpg_season| / mpg_season
   role_change_min_games: 5
   role_change_recent_games: 10

@@ -15,6 +15,10 @@ Every move is judged on its total effect on the team's expected wins, three part
                   If free agents just as good as X are already available, nobody gains by claiming
                   him and this part is zero.
 Moves are taken best first while the total is positive, up to the league's acquisition limit.
+
+A player clearly better per game than every healthy free agent is never dropped for a stream, however
+the numbers come out: he's worth something in a trade, a rival with a free IR slot stashes him for free
+if he's hurt, and injury timelines are the least certain input the model has.
 """
 from __future__ import annotations
 
@@ -23,9 +27,11 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from tradecalc.model.availability import OUT_STATUSES
 from tradecalc.trade.matchup import p_win, season_outlook, week_dist
 
 CLAIM_BAND = 0.10     # within +-5% of the best free agent's value, a claim is a coin flip
+PROTECT_MARGIN = 0.15  # never drop a player this much better per game than the best healthy free agent
 
 
 @dataclass
@@ -71,6 +77,7 @@ class StreamPlan:
     free_ir: int = 0
     options: list = field(default_factory=list)      # first move: alternatives that also help (best first)
     drop_costs: list = field(default_factory=list)   # first move: the best move dropping each bench player
+    kept: list = field(default_factory=list)         # (player, reason): too good to drop for a stream
 
     @property
     def d_future(self) -> float:
@@ -123,11 +130,14 @@ def week_points(state, pid: int, week, start: date) -> float:
 
 
 def available_free_agents(state, exclude=()) -> list[int]:
-    """Free agents that can be added today (ESPN status FREEAGENT; waiver players excluded)."""
+    """Free agents that can be added today and still have games (waiver players and unsigned players
+    excluded)."""
     taken = {i for t in state.rosters for i in real_roster(state, t)} | set(exclude)
     out = []
     for p in state.players.values():
         if p.on_team_id != 0 or p.espn_id in taken or p.mu <= 0:
+            continue
+        if p.games_remaining <= 0 and state.team_game_index:   # unsigned (no NBA team) or done for the year
             continue
         lp = getattr(state.league, "players", {}).get(p.espn_id)
         if lp is not None and getattr(lp, "pool_status", "") == "WAIVERS":
@@ -151,6 +161,35 @@ def streamer_table(state, week, start: date | None = None, top: int = 25) -> pd.
                      "Rest-of-season value": p.ros_value})
     df = pd.DataFrame(rows)
     return df.sort_values("Exp. pts this week", ascending=False).head(top).reset_index(drop=True) if len(df) else df
+
+
+def best_healthy_fa(state, pool: list[int]) -> float:
+    """FPPG of the best free agent who can play now: what a dropped player is replaced with."""
+    P = state.players
+    return max((P[i].mu for i in pool if P[i].injury_status not in OUT_STATUSES), default=0.0)
+
+
+def protected(state, roster: list[int], pool: list[int], margin: float | None = None) -> dict[int, str]:
+    """Players on `roster` no streaming move may drop, with the reason: clearly better per game (when
+    healthy) than any healthy free agent, and not done for the season."""
+    P = state.players
+    margin = state.cfg.get("streaming", {}).get("protect_margin", PROTECT_MARGIN) if margin is None else margin
+    bar = best_healthy_fa(state, pool)
+    last = state.cal.weeks[-1].end if state.cal.weeks else None
+    out = {}
+    for i in roster:
+        p = P[i]
+        if bar <= 0 or p.mu < (1 + margin) * bar:
+            continue
+        av = p.avail
+        if getattr(av, "out_for_season", False) or (last is not None and getattr(av, "back_from", None)
+                                                     and av.back_from > last):
+            continue
+        hurt = p.injury_status in OUT_STATUSES
+        out[i] = (f"{p.mu:.1f} pts/game{' when healthy' if hurt else ''}, more than any free agent "
+                  f"(best {bar:.1f})" + ("; stash him on IR when a slot opens, or trade him" if hurt
+                                          else "; trade him rather than drop him"))
+    return out
 
 
 def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | None = None,
@@ -186,10 +225,14 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
     pool = available_free_agents(state)
     later = _Later(state, team, week, roster)
     claim = _claim_fn(state, team, week, pool, later)
+    keep = protected(state, roster, pool)
+    # worth explaining: the kept players who are hurt, or whose rest-of-season total trails a free agent's
+    fa_ros = max((P[i].ros_value for i in pool), default=0.0)
+    shown = {i: why for i, why in keep.items() if P[i].injury_status in OUT_STATUSES or P[i].ros_value < fa_ros}
     timeline = [(start, [i for i in roster if i not in ir])]          # players in IR slots can't play
     M0, V0 = timeline_dist(state, week, timeline)
     out = StreamPlan(team, week, opp, start, M0 + bank_me, M0 + bank_me, win(M0, V0), win(M0, V0),
-                     open_spots=open_spots, free_ir=free_ir)
+                     open_spots=open_spots, free_ir=free_ir, kept=sorted(shown.items(), key=lambda kv: -P[kv[0]].mu))
     by_week = sorted(pool, key=lambda i: -week_points(state, i, week, start))[:n_add]
     by_ros = sorted(pool, key=lambda i: -P[i].ros_value)[:10]
     adds_all = list(dict.fromkeys(by_week + by_ros))
@@ -197,7 +240,7 @@ def plan(state, team: int, week, max_moves: int | None = None, n_drop: int | Non
     gone, spots, ir_left, to_ir = set(), open_spots, free_ir, []
     for step in range(max_moves):
         last_day, cur = timeline[-1]
-        drops = sorted(cur, key=lambda i: P[i].ros_value)[:n_drop]
+        drops = sorted((i for i in cur if i not in keep), key=lambda i: P[i].ros_value)[:n_drop]
         options = ([("open", None)] if spots > 0 else []) \
             + ([("ir", i) for i in cur if state.ir_eligible(i)] if ir_left > 0 else []) \
             + [("drop", i) for i in drops]
@@ -284,29 +327,40 @@ class _Later:
 
 
 def _claim_fn(state, team: int, week, pool: list[int], later: _Later):
-    """(dropped player, player added, roster you keep) -> Claim (see module docstring)."""
+    """(dropped player, player added, roster you keep) -> Claim (see module docstring).
+
+    Two ways a rival wants him: he beats their weakest player for the rest of the season, or he's
+    hurt, they have a free IR slot, and he's better per game than the best healthy free agent (a
+    stash costs them nothing)."""
     P = state.players
     top = sorted(pool, key=lambda i: -P[i].ros_value)[:2]
     teams = getattr(state.league, "teams", {})
     rank = {t: getattr(teams.get(t), "waiver_rank", None) for t in state.rosters}
     rivals = sorted((t for t in state.rosters if t != team), key=lambda t: (rank.get(t) or 99, t))
     remaining = [w for w in state.cal.weeks if w.start > week.end]
+    n_ir = state.cfg["roster"].get("ir", 0)
+    bar = best_healthy_fa(state, pool)
 
     def claim(x: int, add: int, keeps) -> Claim:
         best = next((P[i].ros_value for i in top if i != add), 0.0)       # best free agent left
-        gap = (P[x].ros_value - best) / max(best, 1.0)
-        p = min(max(0.5 + gap / CLAIM_BAND, 0.0), 1.0)
-        if p <= 0:
+        p_roster = min(max(0.5 + (P[x].ros_value - best) / max(best, 1.0) / CLAIM_BAND, 0.0), 1.0)
+        p_stash = (min(max(0.5 + (P[x].mu - bar) / max(bar, 1.0) / CLAIM_BAND, 0.0), 1.0)
+                   if state.ir_eligible(x) else 0.0)
+        if p_roster <= 0 and p_stash <= 0:
             return Claim(0.0)
         for r in rivals:                                  # waiver order: first team that wants him
             ir_r = set(state.ir.get(r, ()))
-            active = [i for i in state.rosters[r] if i not in ir_r]
-            weakest = min(active, key=lambda i: P[i].ros_value) if active else None
-            if weakest is None or P[x].ros_value > P[weakest].ros_value:
-                new_r = [i for i in state.rosters[r] if i != weakest] + [x]
-                cost = min(later.e_wins(keeps, r, new_r) - later.e_wins(keeps), 0.0)   # a stronger rival never helps
-                weeks = [w.number for w in remaining if state.cal.opponents.get(team, {}).get(w.number) == r]
-                return Claim(p, r, rank.get(r), p * cost, weeks)
+            if p_stash > 0 and len(ir_r & set(state.rosters[r])) < n_ir:
+                new_r, p = list(state.rosters[r]) + [x], p_stash        # straight into their IR slot
+            else:
+                active = [i for i in state.rosters[r] if i not in ir_r]
+                weakest = min(active, key=lambda i: P[i].ros_value) if active else None
+                if p_roster <= 0 or (weakest is not None and P[x].ros_value <= P[weakest].ros_value):
+                    continue
+                new_r, p = [i for i in state.rosters[r] if i != weakest] + [x], p_roster
+            cost = min(later.e_wins(keeps, r, new_r) - later.e_wins(keeps), 0.0)   # a stronger rival never helps
+            weeks = [w.number for w in remaining if state.cal.opponents.get(team, {}).get(w.number) == r]
+            return Claim(p, r, rank.get(r), p * cost, weeks)
         return Claim(0.0)
     return claim
 

@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from tradecalc.model.availability import Availability, availability, games_played_rate
-from tradecalc.model.blend import blend
+from tradecalc.model.blend import blend, blend_minutes
 from tradecalc.model.names import norm_name
 from tradecalc.model.prior import fit_adp_curve, prior_table
 from tradecalc.model.variance import shrunk_sigma
@@ -48,7 +48,56 @@ def test_adp_curve_monotone_and_prior_average():
     assert np.all(np.diff(v) <= 1e-9)
     t = prior_table(adp.head(3), curve, {"P1": 100.0, "Rookie X": 30.0})
     assert t.loc["p1", "prior_fppg"] == pytest.approx((curve(1)[0] + 100) / 2)
-    assert t.loc["rookie x", "curve_fppg"] == pytest.approx(curve.tail_value)
+    # no ADP: the projection alone, not dragged toward the curve's tail
+    assert np.isnan(t.loc["rookie x", "curve_fppg"]) and t.loc["rookie x", "prior_fppg"] == pytest.approx(30.0)
+
+
+def test_undrafted_adp_carries_no_information():
+    """ESPN puts every undrafted player near the last pick: hundreds share ADPs of 130-150, so
+    their order says nothing and must not be read off the curve as ranks 150-600."""
+    drafted = list(np.arange(1.0, 131.0))
+    bunched = list(np.linspace(130.5, 149.5, 300))
+    adp = pd.DataFrame({"name": [f"P{i}" for i in range(430)], "adp": drafted + bunched})
+    adp["adp_rank"] = adp["adp"].rank(method="first").astype(int)
+    actual = pd.DataFrame({"player_name": adp["name"], "live_fppg": np.linspace(55, 8, 430), "n": 60})
+    curve = fit_adp_curve(adp, actual)
+    t = prior_table(adp, curve, {"P400": 27.0})
+    assert t.loc["p100", "curve_fppg"] == pytest.approx(curve(101)[0])      # a real pick keeps its value
+    assert np.isnan(t.loc["p400", "curve_fppg"])                            # ADP 148, "rank" 401: no value
+    assert t.loc["p400", "prior_fppg"] == pytest.approx(27.0)               # his projection stands
+
+
+def test_minutes_blend_keeps_a_slumping_veteran_near_his_level():
+    """33 FPPG at 33 minutes, then 7 games at 14 FPPG in 26 minutes: the minutes drop is mostly
+    believed, the shooting slump mostly isn't. The single-weight blend (k=6) would say 22.2."""
+    b = blend_minutes(pd.Series({1: 33.0}), pd.Series({1: 33.0}), _live(7, 14.0, mpg=26, mpg5=26),
+                      minutes_k=6, rate_k=20, recent_weight=0.25)
+    minutes = (6 * 33 + 7 * 26) / 13
+    rate = (20 * 1.0 + (7 * 26 / 33) * (14 / 26)) / (20 + 7 * 26 / 33)
+    assert b.loc[1, "blended_fppg"] == pytest.approx(minutes * rate)
+    assert 25 < b.loc[1, "blended_fppg"] < 27
+
+
+def test_minutes_blend_agrees_with_a_prior_that_was_right():
+    b = blend_minutes(pd.Series({1: 30.0}), pd.Series({1: 30.0}), _live(10, 30.0, mpg=30, mpg5=30),
+                      minutes_k=6, rate_k=20)
+    assert b.loc[1, "blended_fppg"] == pytest.approx(30.0)
+
+
+def test_minutes_blend_believes_a_new_role_quickly():
+    # bench player (20 FPPG in 20 min) becomes a starter: 34 min, same efficiency
+    b = blend_minutes(pd.Series({1: 20.0}), pd.Series({1: 20.0}), _live(8, 34.0, mpg=34, mpg5=34),
+                      minutes_k=6, rate_k=20)
+    assert b.loc[1, "minutes_hat"] == pytest.approx((6 * 20 + 8 * 34) / 14)
+    assert b.loc[1, "blended_fppg"] == pytest.approx((6 * 20 + 8 * 34) / 14)    # rate unchanged at 1.0
+
+
+def test_minutes_blend_without_prior_minutes_falls_back():
+    b = blend_minutes(pd.Series({1: 40.0}), pd.Series(dtype=float), _live(12, 30.0), minutes_k=6, rate_k=20,
+                      k_fallback=12)
+    assert b.loc[1, "blended_fppg"] == pytest.approx(35.0)
+    b = blend_minutes(pd.Series(dtype=float), pd.Series(dtype=float), _live(3, 30.0), minutes_k=6, rate_k=20)
+    assert b.loc[1, "blended_fppg"] == pytest.approx(30.0)
 
 
 def test_shrunk_sigma():

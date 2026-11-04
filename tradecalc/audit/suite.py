@@ -65,6 +65,15 @@ def test_season_model_fppg(H, ctx, k_grid=(2, 4, 6, 9, 12, 15, 20), n_grid=(5, 1
                "this season so far": float((early[idx] - rest[idx]).abs().mean())}
         for k in k_grid:
             res[f"blend k={k}"] = float((((k * prior_proj[idx] + N * early[idx]) / (k + N)) - rest[idx]).abs().mean())
+        # the live model: minutes x points per minute (model/blend.py), same prior
+        first = sub[sub.g < N]
+        stats = first.groupby("key").agg(n=("fp", "size"), live=("fp", "mean"), mins=("min", "mean"))
+        stats["mins5"] = first.groupby("key")["min"].apply(lambda x: x.tail(5).mean())
+        from tradecalc.audit.hist_state import _season_mu
+        from tradecalc.config import load_config
+
+        mu = _season_mu(ctx, stats.loc[idx], load_config()["model"])
+        res["minutes x rate (live model)"] = float((mu[idx] - rest[idx]).abs().mean())
         rows.append(res)
     df = pd.DataFrame(rows)
     blend = [c for c in df.columns if c.startswith("blend")]

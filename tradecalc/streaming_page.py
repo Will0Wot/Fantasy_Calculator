@@ -47,6 +47,12 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
         st.subheader("The plan")
         for m in pl.moves:
             st.markdown("- " + _move_text(state, m, pl.start))
+    if pl.kept:
+        st.markdown("**Not dropped, whatever the numbers say:** " + "; ".join(
+            f"**{P[i].name}** ({why}{_record(P[i])})" for i, why in pl.kept) + ".")
+        st.caption("A player clearly better per game than every healthy free agent is never dropped for a "
+                   "stream: he's worth something in a trade, a rival with a free IR slot would stash him for free, "
+                   "and injury timelines are the least certain thing the model knows.")
 
     if pl.drop_costs:
         st.subheader("What would dropping each bench player cost?")
@@ -63,18 +69,22 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
         rows = []
         for m in pl.drop_costs:
             c = m.claim
-            rows.append({"Drop": P[m.out].name, "Best pickup for it": f"{P[m.add].name} ({m.day:%a})",
+            x = P[m.out]
+            rows.append({"Drop": x.name, "Pts/game now": x.mu, "Track record": _record(x, short=True),
+                         "Best pickup for it": f"{P[m.add].name} ({P[m.add].mu:.1f}, {m.day:%a})",
                          "This week": m.d_week, "Later weeks": m.d_future,
                          "Claimed by a rival": (f"{c.p:.0%}: {state.team_name(c.team)} (#{c.rank} on waivers)"
                                                 if c.team else "unlikely"),
                          "Rival pickup": c.cost, "Total": m.total})
-        st.dataframe(pd.DataFrame(rows).style.format({"This week": lambda v: f"{v * 100:+.0f}%",
+        st.dataframe(pd.DataFrame(rows).style.format({"Pts/game now": "{:.1f}", "This week": lambda v: f"{v * 100:+.0f}%",
                                                       "Later weeks": "{:+.2f}", "Rival pickup": "{:+.2f}",
                                                       "Total": "{:+.2f}"})
                      .map(lambda v: f"color: {'#16a34a' if v > 0 else '#dc2626'}", subset=["Total"]),
                      hide_index=True, width="stretch")
-        st.caption("This week = change in this week's win chance. The other columns are changes in expected wins over "
-                   "the rest of the season. Waiver order is ESPN's (1 = first claim).")
+        st.caption("Pts/game now = the model's projection per game played (when healthy), built from his record, "
+                   "minutes and this season's games. This week = change in this week's win chance. The other columns "
+                   "are changes in expected wins over the rest of the season. Waiver order is the league's "
+                   "(1 = first claim).")
 
     if len(pl.options) > 1:
         st.subheader("Other moves that help (if your first choice is taken)")
@@ -113,7 +123,8 @@ def _move_text(state, m, start) -> str:
             f"{m.add_games} game{'s' if m.add_games != 1 else ''} from that day.")
     if m.kind == "drop":
         out = P[m.out]
-        line += (f" {out.name} has {m.out_games} game{'s' if m.out_games != 1 else ''} left from then"
+        line += f" {out.name}: {out.mu:.1f} pts/game{_record(out)}."
+        line += (f" He has {m.out_games} game{'s' if m.out_games != 1 else ''} left from then"
                  + (" (waiting keeps his earlier games)." if m.day > start else "."))
         c = m.claim
         if c.team is not None:
@@ -127,3 +138,18 @@ def _move_text(state, m, start) -> str:
              f" Later weeks: {m.d_future:+.2f} wins. **Total: {m.total:+.2f} expected wins.**")
     return line
 
+
+
+def _record(p, short: bool = False) -> str:
+    """Track record: this season so far and last full season, e.g. '; 18.2 in 8 games this season,
+    17.8 in 71 last season'."""
+    parts = []
+    if p.n:
+        parts.append(f"{p.live:.1f} in {p.n} this season" if short else f"{p.live:.1f} in {p.n} games this season")
+    if p.last_games:
+        yr = p.last_season[2:] if p.last_season else "last"
+        parts.append(f"{p.last_fppg:.1f} in {p.last_games} ({yr})" if short
+                     else f"{p.last_fppg:.1f} a game in {p.last_games} games in {p.last_season or 'last season'}")
+    if short:
+        return ", ".join(parts) or "–"
+    return ("; " + ", ".join(parts)) if parts else ""

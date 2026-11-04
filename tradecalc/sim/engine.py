@@ -512,10 +512,19 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
             views.append(float(prev_mpg[pid]) * 0.8)
         if not views:
             continue
+        # Minutes when healthy: the same views without today's depth chart, which lists injured
+        # players last. Used for an injured player's value once he's back (model/values.py).
+        depth_view = depth_min.get(min(dpt[k][1], 4), 4.0) if k in dpt else None
+        healthy_views = list(views)
+        if depth_view is not None and len(views) > 1:
+            healthy_views.remove(depth_view)
         prior = float(np.mean(views))
+        healthy = float(np.mean(healthy_views))
         cn, cb = coach_now.get(team), coach_before.get(team)
         if cn and cb and cn != cb and prior >= 28 and cn in cpar and cb in cpar:
-            prior *= cpar[cn].get("top5_share", clg.get("top5_share", 1)) / cpar[cb].get("top5_share", clg.get("top5_share", 1))
+            coach = cpar[cn].get("top5_share", clg.get("top5_share", 1)) / cpar[cb].get("top5_share", clg.get("top5_share", 1))
+            prior *= coach
+            healthy *= coach
         # current depth chart sets the role (only when it lists him on this team)
         if k in dpt and dpt[k][0] == team:
             d_ = dpt[k][1]
@@ -532,7 +541,8 @@ def build_world_live(H, params: dict, state, depth: pd.DataFrame, coaches: pd.Da
         pos = pos or H.pos_of(k) or "F"
         row = {"key": k, "name": p.name if p is not None else k, "team": team, "nba_id": pid, "pos": pos,
                "age": H.age.get((pid, prev), np.nan) + 1 if pid is not None else np.nan, "exp_min": exp_min,
-               "espn_id": p.espn_id if p is not None else None, "depth": dpt.get(k, (None, None))[1]}
+               "healthy_min": healthy, "espn_id": p.espn_id if p is not None else None,
+               "depth": dpt.get(k, (None, None))[1]}
         if k in rates.index and nba_minutes.get(k, 0) >= 100:
             row.update(rates.loc[k, STATS].to_dict())
         else:
@@ -656,17 +666,22 @@ def role_of(exp_min: float, depth) -> str:
 
 def minutes_projection(world: World) -> pd.DataFrame:
     """Per player (key = normalized name): projected minutes, fantasy points per game implied by
-    those minutes and his per-minute production, and his role."""
+    those minutes and his per-minute production, and his role. `fppg_healthy` is the same at the
+    minutes he plays when healthy (an injured player sits at the bottom of today's depth chart)."""
     from tradecalc.sim.project import expected_box, fantasy
 
     cal = world.params.get("rate_calibration", 1.0)
     rows = []
     for k, r in world.players.iterrows():
         rates = {s: r[s] for s in STATS}
-        fp = fantasy(expected_box(float(r["exp_min"]), rates), world.scoring) * cal * float(r.get("scale", 1.0) or 1.0)
+        mult = cal * float(r.get("scale", 1.0) or 1.0)
+        fp = fantasy(expected_box(float(r["exp_min"]), rates), world.scoring) * mult
+        healthy = r.get("healthy_min")
+        healthy = float(r["exp_min"]) if healthy is None or healthy != healthy else float(healthy)
+        fp_healthy = fantasy(expected_box(healthy, rates), world.scoring) * mult
         depth = r.get("depth")
-        rows.append({"key": k, "minutes": float(r["exp_min"]), "fppg_min": fp, "depth": depth,
-                     "role": role_of(float(r["exp_min"]), depth)})
+        rows.append({"key": k, "minutes": float(r["exp_min"]), "fppg_min": fp, "healthy_min": healthy,
+                     "fppg_healthy": fp_healthy, "depth": depth, "role": role_of(float(r["exp_min"]), depth)})
     return pd.DataFrame(rows).set_index("key")
 
 

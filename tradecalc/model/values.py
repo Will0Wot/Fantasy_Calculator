@@ -15,8 +15,9 @@ import pandas as pd
 from tradecalc.ingest import adp as adp_mod
 from tradecalc.ingest import nba
 from tradecalc.ingest.league import LeagueData, Player
-from tradecalc.model.availability import Availability, availability, calibrated_rate, games_played_rate
-from tradecalc.model.blend import blend
+from tradecalc.model.availability import (OUT_STATUSES, Availability, availability, calibrated_rate,
+                                          games_played_rate)
+from tradecalc.model.blend import blend_minutes
 from tradecalc.model.injury import (InjuryView, injury_view, load_profiles, log_current_injuries,
                                     logged_history, long_absences, manual_history)
 from tradecalc.model.names import norm_name
@@ -48,6 +49,9 @@ class PlayerState:
     minutes: float = float("nan")    # projected minutes per game (depth chart, last season, this season)
     role: str = ""                   # Starter / Rotation / Bench
     mu_by_date: dict = field(default_factory=dict)   # per-game projection where game simulations exist
+    last_fppg: float = float("nan")  # track record: last season's FPPG and games (the season before
+    last_games: int = 0              # if he barely played last season)
+    last_season: str = ""
 
     def mu_on(self, d) -> float:
         """Projected fantasy points if he plays on date d (that game's projection, else his average)."""
@@ -131,6 +135,96 @@ class LeagueState:
         return [p for p in self.players.values() if p.on_team_id == 0]
 
 
+LONG_ABSENCE_DAYS = 14   # out at least this much longer: valued on his record before the injury
+
+
+def _season_before(season: str) -> str:
+    y = int(season[:4]) - 1
+    return f"{y}-{str(y + 1)[2:]}"
+
+
+def _status(p: Player, rep, view: InjuryView, override: dict | None) -> tuple[str, int | None, date | None]:
+    """(status, games out, return date): the injury report's status (else the fantasy platform's),
+    with any manual correction from injury_overrides.csv."""
+    status = rep.status if rep is not None else p.injury_status
+    games_out, return_date = None, view.return_date
+    if override is not None:
+        status = str(override.get("status") or status)
+        go = override.get("games_out")
+        games_out = int(go) if go == go and go is not None else None
+        rd = override.get("return_date")
+        if isinstance(rd, str) and rd:
+            return_date = date.fromisoformat(rd)
+    return status, games_out, return_date
+
+
+def _long_absence(s: tuple, view: InjuryView, today: date) -> bool:
+    """Out at least LONG_ABSENCE_DAYS more (by return date, games out, else the injury's usual length)."""
+    status, games_out, return_date = s
+    if status == "OUT_FOR_SEASON":
+        return True
+    if return_date is not None:
+        return (return_date - today).days >= LONG_ABSENCE_DAYS
+    if games_out is not None:
+        return games_out >= 7
+    return (view.typical_days or 0) >= LONG_ABSENCE_DAYS
+
+
+def _record_fppg(prev_logs: pd.DataFrame, prev2_logs: pd.DataFrame, scoring, min_games: int = 20) -> pd.Series:
+    """FPPG in a player's last season with at least `min_games` games (last season, else the one
+    before), by normalized name."""
+    out = pd.Series(dtype=float)
+    for logs in (prev2_logs, prev_logs):               # last season wins where both qualify
+        if not len(logs):
+            continue
+        logs = logs if "fp" in logs else add_fp(logs, scoring)
+        g = logs[logs["min"] > 0].assign(key=lambda d: d["player_name"].map(norm_name)).groupby("key")["fp"]
+        out = g.mean()[g.size() >= min_games].combine_first(out)
+    return out
+
+
+def _track_record(prev_logs: pd.DataFrame, prev2_logs: pd.DataFrame, scoring, prev_season: str,
+                  min_games: int = 20) -> dict[str, dict]:
+    """{normalized name: last_fppg, last_games, last_season}: last season, or the season before when
+    he played fewer than `min_games` last season (and more then)."""
+    out: dict[str, dict] = {}
+    for logs, season in ((prev2_logs, _season_before(prev_season)), (prev_logs, prev_season)):
+        if not len(logs):
+            continue
+        logs = logs if "fp" in logs else add_fp(logs, scoring)
+        g = logs[logs["min"] > 0].assign(key=lambda d: d["player_name"].map(norm_name)).groupby("key")["fp"]
+        for k, (fppg, n) in pd.DataFrame({"f": g.mean(), "n": g.size()}).iterrows():
+            if k not in out or n >= min_games or n > out[k]["last_games"]:
+                out[k] = {"last_fppg": float(fppg), "last_games": int(n), "last_season": season}
+    return out
+
+
+def _prior_minutes(league: LeagueData, ptab: pd.DataFrame, minutes_proj, out_keys: set[str],
+                   prev_logs: pd.DataFrame) -> pd.Series:
+    """Minutes per game behind the prior, by normalized name, so that prior / minutes is a real
+    points-per-minute rate: the average of the minutes each piece of the prior assumes (ESPN's projected
+    minutes for its projection, the engine's minutes for its piece; healthy minutes for injured players).
+    A prior made only of the ADP piece takes last season's minutes (10+ games)."""
+    has_espn = set(ptab.index[ptab["proj_fppg"].notna()]) if "proj_fppg" in ptab else set()
+    espn = {}
+    for p in league.players.values():
+        k = norm_name(p.name)
+        if k in has_espn and (p.projection or {}).get("MIN"):
+            espn.setdefault(k, float(p.projection["MIN"]))
+    parts = [pd.Series(espn, dtype=float)]
+    if minutes_proj is not None and len(minutes_proj):
+        eng = minutes_proj["minutes"].groupby(level=0).first()
+        if "healthy_min" in minutes_proj:
+            healthy = minutes_proj["healthy_min"].groupby(level=0).first().reindex(eng.index)
+            eng = eng.where(~eng.index.isin(list(out_keys)), healthy)
+        parts.append(eng)
+    out = pd.concat(parts, axis=1).mean(axis=1, skipna=True)
+    if len(prev_logs):
+        g = prev_logs[prev_logs["min"] > 0].assign(key=lambda d: d["player_name"].map(norm_name)).groupby("key")["min"]
+        out = out.combine_first(g.mean()[g.size() >= 10])
+    return out
+
+
 def load_injury_overrides(path) -> dict[str, dict]:
     """Optional CSV: name, status, games_out, return_date. Overrides ESPN injury info per player."""
     try:
@@ -163,8 +257,7 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
 
     cur_logs = add_fp(nba.game_logs(conn, lg["nba_season"]), scoring)
     prev_logs = add_fp(nba.game_logs(conn, lg["prev_nba_season"]), scoring)
-    prev2 = cfg.get("backtest", {}).get("fit_season")
-    prev2_logs = nba.game_logs(conn, prev2) if prev2 else prev_logs.iloc[0:0]
+    prev2_logs = nba.game_logs(conn, _season_before(lg["prev_nba_season"]))
 
     # --- prior: ADP curve (fit on last season) averaged with ESPN's projection.
     curve = fit_adp_curve(adp_mod.load_adp(cfg.path(cfg["data"]["prev_adp_csv"])), live_stats(prev_logs, scoring))
@@ -187,14 +280,34 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
             hist.append(HistoryEntry("long_absence", None, f"game logs: missed {absent[key]} straight"))
         views[p.espn_id] = injury_view(p, report.get(p.espn_id) or report_by_name.get(key), hist, ic,
                                        today, cal.first_day)
-    # Research multiplier applies to the ADP-curve half of the prior only; ESPN's projection
-    # half already reflects their analysts' view of the injury.
+    overrides = load_injury_overrides(cfg.path(cfg["data"].get("injury_overrides_csv", "data/injury_overrides.csv")))
+    statuses = {p.espn_id: _status(p, report.get(p.espn_id) or report_by_name.get(norm_name(p.name)),
+                                   views[p.espn_id], overrides.get(norm_name(p.name)))
+                for p in league.players.values()}
+    # Research multiplier applies to the ADP-curve and engine pieces of the prior; ESPN's
+    # projection already reflects their analysts' view of the injury.
     mult = pd.Series({norm_name(league.players[i].name): v.fppg_mult for i, v in views.items()})
     mult = mult.groupby(level=0).min().reindex(ptab.index).fillna(1.0)
     curve_adj = ptab["curve_fppg"] * mult
+    # A player who is out is valued per game once he's back. A long absence also sinks his draft
+    # position (drafters price in the games he'll miss, which availability already counts), so his
+    # record before the injury stands in for the ADP piece. Players come back at about 92% of their
+    # earlier level after long absences (2021-22..2025-26, docs/model_audit.md §10); the injury
+    # multiplier covers the bigger drops after major injuries.
+    out_keys = {norm_name(league.players[i].name) for i, s in statuses.items() if s[0] in OUT_STATUSES}
+    long_out = {norm_name(league.players[i].name) for i, s in statuses.items()
+                if s[0] in OUT_STATUSES and _long_absence(s, views[i], today)}
+    record = _record_fppg(prev_logs, prev2_logs, scoring)
+    track = _track_record(prev_logs, prev2_logs, scoring, lg["prev_nba_season"])
+    swap = [k for k in long_out if k in curve_adj.index and k in record.index]
+    curve_adj.loc[swap] = record.loc[swap].to_numpy() * mult.loc[swap].to_numpy()
     comps = [curve_adj, ptab["proj_fppg"]]
     if minutes_proj is not None and len(minutes_proj):
         mp = minutes_proj["fppg_min"].groupby(level=0).first()
+        if "fppg_healthy" in minutes_proj:
+            healthy = minutes_proj["fppg_healthy"].groupby(level=0).first()
+            hurt = mp.index.isin(list(out_keys))
+            mp = mp.where(~hurt, healthy.reindex(mp.index))
         ptab = ptab.reindex(ptab.index.union(mp.index))
         curve_adj = curve_adj.reindex(ptab.index)
         mult = mult.reindex(ptab.index).fillna(1.0)
@@ -205,9 +318,10 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
     live = live_stats(cur_logs, scoring, recent_games=m["role_change_recent_games"]) if len(cur_logs) else None
     if live is not None:
         live = live.assign(key=live["player_name"].map(norm_name)).drop_duplicates("key").set_index("key")
-        b = blend(prior, live, m["k"], role_threshold=m["role_change_threshold"],
-                  role_min_games=m["role_change_min_games"], recent_weight=m["role_change_recent_weight"],
-                  replacement=curve.tail_value)
+        b = blend_minutes(prior, _prior_minutes(league, ptab, minutes_proj, out_keys, prev_logs), live,
+                          minutes_k=m["minutes_k"], rate_k=m["rate_k"], recent_weight=m["recent_minutes_weight"],
+                          role_threshold=m["role_change_threshold"], role_min_games=m["role_change_min_games"],
+                          replacement=curve.tail_value, k_fallback=m["k"])
     # --- games-played rate over the last two seasons, keyed by normalized name. Each season's
     # longest absence (if >= long_absence_games) is dropped from the denominator, giving a
     # healthy baseline: the injury itself is modeled by its profile (model/injury.py), so it
@@ -220,7 +334,6 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
                 excluded[pid] = excluded.get(pid, 0) + g
     gp = games_played_rate([l for l in (prev2_logs, prev_logs) if len(l)], excluded=excluded)
     gp_by_name = {norm_name(n): gp.get(pid) for pid, n in zip(names["player_id"], names["player_name"])}
-    overrides = load_injury_overrides(cfg.path(cfg["data"].get("injury_overrides_csv", "data/injury_overrides.csv")))
 
     team_games: dict[str, list[date]] = {}
     for d, teams in sorted(cal.games_by_day.items()):
@@ -242,17 +355,7 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
     for p in league.players.values():
         key = norm_name(p.name)
         view = views[p.espn_id]
-        rep = report.get(p.espn_id) or report_by_name.get(key)
-        status = rep.status if rep is not None else p.injury_status
-        games_out, return_date = None, view.return_date
-        if key in overrides:
-            o = overrides[key]
-            status = str(o.get("status") or status)
-            go = o.get("games_out")
-            games_out = int(go) if go == go and go is not None else None
-            rd = o.get("return_date")
-            if isinstance(rd, str) and rd:
-                return_date = date.fromisoformat(rd)
+        status, games_out, return_date = statuses[p.espn_id]
         acal = m.get("availability_calibration")
         if acal:
             ng = int(cur_apps.get(key, 0))
@@ -305,7 +408,7 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
         players[p.espn_id] = PlayerState(
             p.espn_id, p.name, p.pro_team, tuple(p.positions), p.on_team_id, status, mu, sigma, av,
             n=n, prior=float(prior.get(key, np.nan)), live=lv, role_change=role, ros_value=ros,
-            games_remaining=len(js), flags=flags, injury=view,
+            games_remaining=len(js), flags=flags, injury=view, **track.get(key, {}),
         )
         if minutes_proj is not None and key in minutes_proj.index:
             mrow = minutes_proj.loc[key]

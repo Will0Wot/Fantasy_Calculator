@@ -350,3 +350,125 @@ the loaded modules, and a changed file reloads them.
 | `engine.absence_rho` / `absence_rho_backtest` | none (independent games) | 0.59 live / 0.85 in backtests |
 | possession `form_sd` (`sim/possession/engine.py`) | 0.18 | 0.30 |
 | `model.matchup_shrink` (β), with per-game projections | 0.745 | 0.778 |
+| `model.minutes_k`, `rate_k`, `recent_minutes_weight` (November 2026) | single blend, k = 6 | minutes × points per minute: 6, 20, 0.25 (§10) |
+| `streaming.protect_margin` | none | 0.15: never drop a player 15% better per game than the best healthy free agent (§10) |
+
+## 10. November 2026: recommendations an experienced manager would make
+
+*Prompted by a simple question: would anyone really drop Kyrie Irving for a bench player? The week 3 streaming
+plans for all 12 teams in the league were checked against each player's track record. Three of the chosen
+moves dropped a player who had averaged 34–39 fantasy points a game the season before, each for Neemias
+Queta (24.5): Jimmy Butler (39.1), Brandon Ingram (35.6) and Jalen Suggs (33.8). Five causes were found. Each
+was fixed and tested. The scripts are in the commit's history.*
+
+### 10.1 Injured players were valued at a fraction of their level
+
+A player who is out is valued per game once he's back. His three prior pieces (methodology §1.1) were all
+pulled down by the injury itself:
+
+| Player | Last season | Prior before | Prior after | Main cause |
+|---|---|---|---|---|
+| Jimmy Butler (ACL, back ~Jan 2) | 39.1 | 23.8 | 34.1 | 12 bench minutes (depth chart lists him last), ADP 137.6 |
+| Brandon Ingram (Achilles surgery, back ~Nov 8) | 35.6 | 20.9 | 30.4 | **0** minutes in the engine piece |
+| Kawhi Leonard (knee, back ~Nov 23) | 48.7 | 36.3 | 47.1 | 17 minutes |
+| Anthony Edwards (meniscus, back ~Dec 21) | 45.6 | 38.3 | 40.2 | 25 minutes |
+
+The fixes:
+
+- The engine piece uses his minutes when healthy, the minutes views without today's depth chart.
+- When he's out at least 14 more days, the ADP piece is replaced by his last healthy season's FPPG. Drafters priced
+  in the games he'll miss, and availability already counts those.
+- The research injury multiplier is still applied once.
+
+**Evidence.** Within-season absences of 15+ team games, 2021-22 to 2025-26, by players averaging 20+ before them:
+
+| | Cases | Median after / before, first 10 games | Rest of season | Minutes, first 10 |
+|---|---|---|---|---|
+| 15–25 games out | 60 | 0.955 | 0.937 | 0.931 |
+| 26–40 games out | 10 | 0.838 | 0.747 | 0.847 |
+| All | 71 | 0.923 | 0.933 | 0.918 |
+
+The model now values these players at 85–98% of their last season, within this range after the injury
+multiplier. Before, it valued them at 59–75%.
+
+**Return chance.** A profile's chance of missing the season (Achilles 25%, ACL 15%) was applied at full strength
+no matter how close the return was, so Ingram, back in 5 days from a G League rehab stint, lost a quarter of
+every remaining game. Only the share of the recovery still ahead is at risk now (methodology §1.4).
+
+### 10.2 Undrafted players read the ADP curve as if ranked 150th–600th
+
+ESPN's current-season ADP gives every player who goes undrafted in its mock drafts an ADP near the last pick:
+476 players sit between 130 and 150. The code ranked them by these near-equal ADPs, so the curve valued them
+far below their level:
+
+| Player | ADP | Curve value | Points per game |
+|---|---|---|---|
+| Kelly Oubre Jr. | 139.8 | 11.0 | 27.3 last season |
+| Grayson Allen | 139.5 | 11.0 | 30.5 last season |
+| Zach Edey | 128.3 | 30.3 (a real pick) | |
+
+Players without any ADP got the curve's tail value (11) averaged into their prior too. An ADP now counts only
+where its rank is close to the ADP itself (rank ≤ 1.1·ADP + 5); otherwise the prior is ESPN's projection and the
+engine's piece. This bug lowered the prior of most players outside the top 130 by roughly 2–5 FPPG, in every
+feature, not just streaming.
+
+### 10.3 A few bad games outweighed a long record
+
+The old update, $(6\,\text{prior} + n\,\bar x)/(6+n)$, let 7 bad games take Mikal Bridges from 31.8 to 22.5 (33.3 last
+season, five straight 82-game seasons). Two alternatives were fitted on three of the seasons 2022-23 to 2025-26
+and tested on the fourth, at 3, 5, 7, 10, 15 and 20 games in. Each season has about 400–500 players with an ESPN
+or last-season prior. Mean absolute error of rest-of-season FPPG:
+
+| Method | 2022-23 | 2023-24 | 2024-25 | 2025-26 | Mean |
+|---|---|---|---|---|---|
+| Old: one weight, k = 6 | 3.675 | 4.057 | 3.892 | 4.505 | 4.032 |
+| Best single weight (k = 9) | 3.539 | 4.033 | 3.920 | 4.572 | 4.016 |
+| Weight grows with games of history | 3.574 | 4.034 | 3.908 | 4.549 | 4.016 |
+| **Minutes × points per minute (adopted)** | **3.456** | **4.001** | **3.816** | **4.409** | **3.921** |
+
+Each piece moves at its own speed: minutes are worth 6 games of prior and points per minute 20 games. The last 5
+games get 25% of the live minutes. This method was best in every season and at every checkpoint, by 2.2% on average.
+
+A longer track record alone didn't help. Neither did more weight on recent minutes after a role change: a 50%
+weight was no better than 25%, and 75–100% was worse.
+
+**Slow-starting veterans.** 434 player-checkpoints had a 90+ game record, a prior of 25+, and first games under 80% of
+the prior. They finished at a median 87% of the prior, while their first games ran at 69%.
+
+| Method | MAE | Bias |
+|---|---|---|
+| Old | 4.04 | −0.66 (wrote them down too far) |
+| New | 3.83 | +0.67 |
+
+Bridges is now projected at 25.9, not 22.5.
+
+The prior's minutes must match the prior's own pieces. Falling back to last season's minutes gave Joan Beringer,
+whose 7.9 garbage-time minutes last season sat under an 18.3-minute prior, 2.6 points a minute, or 26.1 a game.
+He's now at 20.4.
+
+**Team-level check.** The audit's season-model tests (methodology §5) on 4 mock leagues per season, 2023-24 to
+2025-26, old vs new: weekly Brier 0.2303 → 0.2299, calibration slope 0.87 → 0.91, season-win MAE unchanged
+(2.11 / 1.79 at weeks 7 / 13), trade correlation unchanged (0.429). Per-player accuracy improved, and nothing
+downstream got worse.
+
+### 10.4 Streaming rules
+
+- **IR stash claims.** A dropped injured player was assumed unclaimed unless he beat a rival's weakest
+  *current* player. Now the first rival with a free IR slot claims him whenever he's better per game than
+  the best healthy free agent: the stash costs that rival nothing.
+- **Never drop a clearly better player.** A player 15% better per game, when healthy, than the best free
+  agent who can play now is never dropped for a stream, unless he's done for the season. The app shows
+  each one kept and why ("stash him on IR when a slot opens, or trade him").
+- **Unsigned players aren't free agents.** Kevin Porter Jr. had no NBA team and no games left, yet was
+  projected at 31.7 and set the "best free agent" bar.
+- **Track record shown.** Each drop candidate's points per game this season and last season is shown
+  next to the move.
+
+**Result, week 3 (Nov 3, 2026).** Every team's chosen drop is a bench player:
+
+- Bones Hyland (16.1), Jaylen Wells (22.1), Aaron Wiggins (22.4), Moritz Wagner (18.1), Quenton Jackson (21.8);
+- Julian Champagnie (25.1), Jared McCain (20.8), Tari Eason (23.8), Aaron Nesmith (20.2), Coby White (27.5,
+  day-to-day), Kelly Oubre Jr. (19.8, day-to-day).
+
+Sixteen injured or older players who would have been drop candidates are now kept with a reason, among them
+Butler, Ingram, Suggs, Kawhi Leonard, Tyrese Haliburton and Damian Lillard.

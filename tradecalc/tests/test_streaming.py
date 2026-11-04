@@ -9,7 +9,7 @@ ROSTER_10 = {"roster.bench": 0, "roster.ir": 0}        # 10 active spots, so no 
 
 
 def league(fa_week2_games: int, b_week2_games: int = 4, injured_core: bool = False, ir_slots: int = 0,
-           b_mu: float = 25, filler_mu: float = 26, filler_week2_games: int = 2):
+           b_mu: float = 25, filler_mu: float = 26, filler_week2_games: int = 2, protect: float | None = None):
     """Team 1: 9 core players who play every day + bench player B (b_mu/game, 2 games in week 1).
     Free agent S (22/game) plays 4 games in week 1. Team 2 is a similar opponent. Three more free
     agents (filler_mu/game, idle in week 1) set the level of the waiver wire."""
@@ -36,8 +36,10 @@ def league(fa_week2_games: int, b_week2_games: int = 4, injured_core: bool = Fal
     if injured_core:
         ps[0].injury_status = "OUT"
         ps[0].avail = type(ps[0].avail)(1.0, out_games=99)
-    st = make_state(ps, games, n_weeks=2, opponents={1: {1: 2, 2: 2}, 2: {1: 1, 2: 1}},
-                    cfg_overrides={**ROSTER_10, "roster.ir": ir_slots})
+    over = {**ROSTER_10, "roster.ir": ir_slots}
+    if protect is not None:
+        over["streaming.protect_margin"] = protect
+    st = make_state(ps, games, n_weeks=2, opponents={1: {1: 2, 2: 2}, 2: {1: 1, 2: 1}}, cfg_overrides=over)
     return st
 
 
@@ -80,8 +82,9 @@ def test_injured_player_goes_to_ir_instead_of_dropping_someone():
 
 def test_dropping_a_player_better_than_the_waiver_wire_counts_the_rival_who_claims_him():
     # B scores 50 a game but is hurt now: dropping him adds points this week, but he's better than any
-    # free agent, so the rival with first waiver priority (team 2, our week-2 opponent) claims him
-    st = league(fa_week2_games=4, b_mu=50)
+    # free agent, so the rival with first waiver priority (team 2, our week-2 opponent) claims him.
+    # (The guardrail would never drop him; it's switched off to test the claim on its own.)
+    st = league(fa_week2_games=4, b_mu=50, protect=99)
     st.league.teams[2].waiver_rank = 1
     b = st.players[10]
     b.avail = type(b.avail)(0.3, out_games=3)
@@ -102,9 +105,47 @@ def test_nobody_claims_a_player_no_better_than_the_free_agents():
 
 def test_no_claim_when_no_rival_would_want_him():
     # same player, but every rival player is worth more than him: nobody would claim him
-    st = league(fa_week2_games=4, b_mu=50)
+    st = league(fa_week2_games=4, b_mu=50, protect=99)
     b = st.players[10]
     b.avail = type(b.avail)(0.3, out_games=3)
     b.ros_value = 200.0
     m = next(m for m in plan(st, 1, st.cal.weeks[0], max_moves=1).drop_costs if m.out == 10)
     assert m.claim.team is None and m.claim.cost == 0
+
+
+def test_never_drops_a_player_clearly_better_than_every_free_agent():
+    """Would anyone drop a star for a streamer? B scores 50 a game (free agents: 26), is out for this
+    week's games, and dropping him would add points now. He's kept, and the plan says why."""
+    st = league(fa_week2_games=4, b_mu=50)
+    b = st.players[10]
+    b.injury_status = "OUT"
+    b.avail = type(b.avail)(0.9, out_games=3)
+    pl = plan(st, 1, st.cal.weeks[0], max_moves=1)
+    assert all(m.out != 10 for m in pl.moves + pl.drop_costs)
+    kept = dict(pl.kept)
+    assert set(kept) == {10} and "when healthy" in kept[10] and "trade him" in kept[10]
+    # the healthy 40-a-game core players are protected too, just not worth a note
+    assert all(m.out not in range(1, 10) for m in pl.drop_costs)
+
+
+def test_a_player_done_for_the_season_can_be_dropped():
+    st = league(fa_week2_games=4, b_mu=50)
+    b = st.players[10]
+    b.injury_status = "OUT_FOR_SEASON"
+    b.avail = type(b.avail)(0.9, out_for_season=True)
+    pl = plan(st, 1, st.cal.weeks[0], max_moves=1)
+    assert 10 not in dict(pl.kept) and any(m.out == 10 for m in pl.drop_costs)
+
+
+def test_rival_with_a_free_ir_slot_stashes_a_dropped_injured_player():
+    """An injured player who doesn't beat anyone on a rival's active roster *now* is still claimed by a
+    rival with an open IR slot: stashing him costs nothing, and he's better than the free agents."""
+    st = league(fa_week2_games=4, b_mu=30, protect=99, ir_slots=1)
+    st.league.teams[2].waiver_rank = 1
+    b = st.players[10]
+    b.injury_status = "OUT"
+    b.avail = type(b.avail)(0.9, out_games=3)
+    b.ros_value = 40.0                                   # below every rival player's: no roster claim
+    pl = plan(st, 1, st.cal.weeks[0], max_moves=1)
+    m = next(m for m in pl.drop_costs if m.out == 10)
+    assert m.claim.team == 2 and m.claim.p == 1.0 and m.claim.cost <= 0

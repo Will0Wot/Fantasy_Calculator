@@ -36,23 +36,68 @@ $$
 * **ADP curve** $c(r)$: monotone decreasing map from draft rank to FPPG, fitted on last season
   (rank → actual FPPG): 9-rank rolling mean, then isotonic regression weighted by games played
   (`model/prior.py`).
+  * **No ADP, no curve value.** ESPN gives every player who goes undrafted in its mock drafts an ADP
+    near the last pick, so in 2026-27, 476 players have ADPs between 130 and 150. Their order says
+    nothing, and reading ranks 150–600 off the curve valued 27-a-game starters at 11.
+  * An ADP counts only where its rank is close to the ADP itself ($r_i \le 1.1\,\text{ADP}_i + 5$).
+    Players outside that, or with no ADP at all, have no ADP piece. They aren't given the curve's
+    tail value.
 * **ESPN projection** $\hat f^{\text{ESPN}}$: ESPN's season projection scored with league weights.
 * **Minutes view** $\hat f^{\text{min}} = \mathbb E[\text{FP}\mid \hat m_i]$: projected minutes × the
   engine's per-minute rates (§2.1–2.2), so role (starter / bench) moves the prior.
 * $m_i$: research-based production multiplier in the first / second year back from a major
   injury (§3); not applied to ESPN's projection, which already reflects it.
 
-### 1.2 Shrinkage of live data
+**A player who's out** is valued per game *once he's back*; availability (§1.4) counts the games he misses.
+
+* **Healthy minutes.** The minutes view uses the minutes he plays healthy: his minutes views without
+  today's depth chart, which lists injured players last. Otherwise Butler got a 4th-stringer's 12 minutes,
+  and Ingram got 0.
+* **Last healthy season replaces the ADP piece.** If he's out at least 14 more days, his FPPG in his last
+  season with 20+ games (× $m_i$) stands in for the ADP piece. Drafters priced in the games he'll miss,
+  which availability already counts.
+* **Evidence.** Across 71 long absences (15+ team games) in 2021-22 to 2025-26, players averaging 20+
+  came back at a median 92% of their earlier level (75–84% after 26–40 games out). Before this fix the
+  model had Butler and Ingram at about 60%.
+
+### 1.2 Updating with this season's games: minutes × points per minute
+
+Fantasy points per game are split into minutes and points per minute, each updated at its own speed:
 
 $$
-\mu_i = \frac{k\,\text{prior}_i + n_i\, \bar x_i}{k + n_i}, \qquad k = 6
+\hat m_i = \frac{k_m\, m^{\text{prior}}_i + n_i\, \tilde m_i}{k_m + n_i}, \qquad
+\hat r_i = \frac{k_r\, \dfrac{\text{prior}_i}{m^{\text{prior}}_i} + w_i\, \dfrac{\bar x_i}{\bar m_i}}{k_r + w_i}, \qquad
+\mu_i = \hat m_i\, \hat r_i
 $$
 
-with $n_i$ games played this season and $\bar x_i$ their mean FP. **Role-change override**: if
-$|\text{MPG}_{\text{last 5}} - \text{MPG}_{\text{season}}| / \text{MPG}_{\text{season}} > 0.20$
-and $n_i \ge 5$, use $k/2$ and replace $\bar x_i$ by $\tfrac12(\bar x_i + \bar x_i^{\text{last 10}})$.
+with $k_m = 6$, $k_r = 20$, and:
 
-$k$ is chosen by backtest (§5.1): rest-of-season MAE is flat for $k \in [6, 9]$ in all three test seasons.
+* $n_i$: games played; $\bar x_i$, $\bar m_i$: their mean FP and minutes.
+* $\tilde m_i = 0.75\,\bar m_i + 0.25\,\bar m_i^{\text{last 5}}$: live minutes, with recent games weighted
+  up.
+* $w_i = n_i\,\bar m_i / m^{\text{prior}}_i$: games scaled by how many minutes they had.
+* $m^{\text{prior}}_i$: the minutes behind the prior, the average of the minutes each of its pieces assumes
+  (ESPN's projected minutes, the engine's).
+
+**Why.** Minutes follow a player's role, so a few games are believable. Points per minute are mostly
+shooting luck and even out slowly.
+
+**Tested out of sample** on 2022-23 to 2025-26: fitted on three seasons, tested on the fourth, after
+3 to 20 games.
+
+* Rest-of-season MAE was 3.94 FPPG against 4.03 for the single-weight blend
+  $(6\,\text{prior} + n\,\bar x)/(6 + n)$, lower in every season and at every checkpoint.
+* On the audit's mock leagues, weekly win chances were slightly better calibrated (slope 0.91 vs 0.87),
+  with equal season-win and trade accuracy (`docs/model_audit.md` §10).
+* **Slow starters.** Established players whose first games ran below 80% of their prior (434 cases) finished
+  the season at a median 87% of it, not at the 69% of their first games. The old blend wrote them down
+  too far (bias −0.66 FPPG).
+* Neither tested alternative helped: extra prior weight for players with a long record, or extra weight on
+  recent minutes after a role change.
+
+A player with no prior minutes falls back to $(k\,\text{prior}_i + n_i\, \bar x_i)/(k + n_i)$, $k = 6$.
+The role-change flag ($|\text{MPG}_{\text{last 5}} - \text{MPG}_{\text{season}}| / \text{MPG}_{\text{season}} > 0.20$,
+$n_i \ge 5$) is shown in the app.
 
 **Outlier games are not capped.** Winsorizing single games (at $\text{ref}\,(1 \pm z\,\text{cv})$ around the
 prior or the running estimate, $z \in \{1.5, 2, 2.5, 3\}$) raised rest-of-season MAE by 2–9% in every
@@ -99,6 +144,14 @@ and the simulator's low team totals were only partly fixed.
 back ramps linearly from 0 at ESPN's return date $R$ to $\text{rtp}$ at $R + w$,
 $w = \operatorname{clip}(0.3 \cdot \text{days out}, 4, 30)$; day-to-day ⇒ 0.5 until $R$; profile
 multipliers apply in date windows (ramp-up weeks, year-1 / year-2 games effects).
+
+**The chance of returning this season rises as the return date nears.**
+
+* A profile's rtp (Achilles 75%, ACL 85%) is for the whole recovery. With a return date $R$ set, only
+  the part of the recovery still ahead is at risk:
+  $\text{rtp}_{\text{now}} = 1 - (1 - \text{rtp})\,\min\!\big(1, (R - \text{today}) / \text{typical days}\big)$.
+* Before this, Brandon Ingram was due back in 5 days and already on a G League rehab assignment, but had a
+  25% chance of missing the season on every remaining game.
 
 **Not on the injury report** (live only). A player with no injury designation today is much safer for
 his next few games than his season rate says, because rest days and new injuries show up on the report
@@ -261,7 +314,11 @@ $$
 $$
 
 (a coin flip within ±5% of the best free agent). The claimant is the rival with the best ESPN waiver
-priority whose weakest active player is worth less than $x$; he replaces that player. Then
+priority whose weakest active player is worth less than $x$; he replaces that player.
+
+**IR stash.** An injured $x$ is also claimed by the first rival (in waiver order) with a free IR slot. The
+stash costs that rival nothing, so the test is per game: $\pi(x)$ uses his FPPG when healthy against the
+best healthy free agent's. He joins the rival's roster without displacing anyone. Then
 
 $$
 C_{\text{claim}} = \pi(x)\,\big(\mathbb E[\text{your wins after } w \mid \text{rival has } x] - \mathbb E[\text{your wins after } w]\big),
@@ -272,6 +329,30 @@ has $\pi = 0$: rivals could already add an equivalent player. Example (week 1, 2
 Kyrie Irving for the best pickup would add 3% this week but cost 0.27 wins later without him, and
 Bagchasers Anonymous (first on waivers, 68% claim chance) would gain him for your weeks 6 and 17
 (−0.03): total −0.27, so it is not suggested.
+
+**Players who are never dropped.** A player is never considered for a stream, whatever the expected
+wins say, if both hold:
+
+* his FPPG (when healthy) is at least 15% above the best free agent who can play now
+  (`streaming.protect_margin`);
+* he isn't done for the season.
+
+The reasons:
+
+* he's worth something in a trade, and dropping him gets nothing;
+* if he's hurt, a rival with a free IR slot stashes him for free;
+* injury timelines are the least certain input the model has.
+
+The app lists these players and explains each one, for example "34.1 pts/game when healthy, more than any
+free agent (best 25.2); stash him on IR when a slot opens, or trade him".
+
+Before this rule and the fixes in §1.1–1.2, week 3 of 2026-27 planned drops of three injured players for
+Neemias Queta (24.5): Jimmy Butler (39.1 FPPG last season), Brandon Ingram (35.6) and Jalen Suggs (33.8).
+After them, every team's chosen drop is a bench player, and 16 injured or older players who would have
+been candidates are kept with a reason.
+
+Unsigned players (no NBA team, no games left) are not free agents for streaming, and don't set the bar.
+Kevin Porter Jr., projected at 31.7 but with no team, did.
 
 ---
 

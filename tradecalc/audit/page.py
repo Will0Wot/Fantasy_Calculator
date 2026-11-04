@@ -256,7 +256,9 @@ prediction date. Then the predictions were compared with what really happened in
             st.markdown("**Rest-of-season fantasy points per game: error (MAE) after N games**, by method")
             st.dataframe(pd.DataFrame(sf).round(2), hide_index=True, width="stretch")
             st.caption(f"Best blend weight k in this season: {_g(r, 'season_fppg', 'best_k')}. "
-                       "The model blends ESPN's preseason projection with this season's average as (k·prior + n·live)/(k+n).")
+                       "The blend columns weight ESPN's preseason projection and this season's average as "
+                       "(k·prior + n·live)/(k+n). The live model (last column, from Nov 2026) updates minutes and points "
+                       "per minute separately: minutes quickly, points per minute slowly (methodology §1.2).")
 
     st.subheader("Trying to break the model")
     br = final.get("breaks") or []

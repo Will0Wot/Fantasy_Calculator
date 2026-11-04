@@ -36,9 +36,22 @@ def test_current_major_injury_view():
     rep = Injury(1, "X", "OUT", date(2027, 1, 2), "Right Knee Surgery", "torn ACL", "2026-10-02")
     v = injury_view(_player("OUT"), rep, [], IC, TODAY, TODAY)
     p = IC.profiles["acl"]
-    assert v.current == "acl" and v.rtp == p.rtp and v.fppg_mult == p.year1["fppg"]
+    ahead = (date(2027, 1, 2) - TODAY).days / p.typical_days       # 74 of 372 days of recovery still ahead
+    assert v.current == "acl" and v.rtp == pytest.approx(1 - (1 - p.rtp) * ahead) and v.fppg_mult == p.year1["fppg"]
     # Ramp-up window starts on the return date.
     assert (date(2027, 1, 2), date(2027, 2, 1), p.ramp) in v.modifiers
+
+
+def test_return_chance_rises_as_the_return_date_nears():
+    """The profile's chance of missing the season covers the whole recovery. A player back in 5 days
+    (Ingram, Nov 2026: Achilles surgery, recalled from a G League rehab stint) is near-certain to return;
+    a fresh injury with a year to go keeps the profile's full risk."""
+    p = IC.profiles["achilles"]
+    soon = injury_view(_player("OUT"), Injury(1, "X", "OUT", TODAY + timedelta(5), "Right Achilles Surgery", "", ""),
+                       [], IC, TODAY, TODAY)
+    fresh = injury_view(_player("OUT"), Injury(1, "X", "OUT", TODAY + timedelta(400), "Right Achilles Surgery", "", ""),
+                        [], IC, TODAY, TODAY)
+    assert soon.rtp > 0.99 and fresh.rtp == pytest.approx(p.rtp)
 
 
 def test_outlook_history_returns_at_season_start():
