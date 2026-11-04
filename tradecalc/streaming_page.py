@@ -24,8 +24,11 @@ def render(st, state, ME: int, team_ids: list[int], team_label: dict) -> None:
     team = c0.selectbox("Team", team_ids, key="stream_for", format_func=team_label.get)
     week = c1.selectbox("Week", weeks, format_func=lambda w: f"Week {w.number}: {w.start:%b %d} – {w.end:%b %d}"
                         + (" (this week)" if w.start <= state.today <= w.end else ""))
-    limit = int(cfg.get("streaming", {}).get("moves_per_week", 1))
-    moves = c2.number_input("Pickups to plan", 1, 4, limit, help=f"League limit read from ESPN: {limit} per matchup.")
+    scfg = cfg.get("streaming", {})
+    limit = min(int(scfg.get("moves_per_week", 1) or 1), 4)
+    moves = c2.number_input("Pickups to plan", 1, 4, limit,
+                            help="Your league has no weekly pickup limit; planning up to 4." if scfg.get("moves_unlimited")
+                            else f"Your league's limit: {limit} per matchup.")
 
     with st.spinner("Trying every drop, pickup and day…"):
         pl = plan(state, team, week, max_moves=int(moves))

@@ -73,4 +73,6 @@ def expected_box(minutes: float, r: dict) -> dict:
 
 
 def fantasy(box: dict, scoring: dict) -> float:
-    return float(sum(w * box[k.lower()] for k, w in scoring.items()))
+    """League weights on an expected box. Stats the box doesn't have (a DD bonus, fouls) count 0 here;
+    the season model adds bonuses from the player's own games (model/scoring.py: bonus_rates)."""
+    return float(sum(w * box.get(k.lower(), 0.0) for k, w in scoring.items()))

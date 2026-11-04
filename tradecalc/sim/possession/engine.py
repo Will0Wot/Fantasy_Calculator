@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from tradecalc.ingest.pbp import ZONES
+from tradecalc.model.scoring import BONUS_TENS
 from tradecalc.sim.engine import BOX, GameSims, draw_minutes
 
 ZI = {z: i for i, z in enumerate(ZONES)}
@@ -433,6 +434,11 @@ def fantasy(stats: np.ndarray, scoring: dict) -> np.ndarray:
     """stats n x p x S -> fantasy points n x p (league weights; REB = OREB + DREB)."""
     s = {k: stats[..., SI[k]] for k in STATS}
     s["reb"] = s["oreb"] + s["dreb"]
+    bonus = {k.upper(): w for k, w in scoring.items() if k.upper() in BONUS_TENS}
+    if bonus:
+        t = sum((s[c] >= 10).astype(int) for c in ("pts", "reb", "ast", "stl", "blk") if c in s)
+        for b, w in bonus.items():
+            s[b.lower()] = (t >= BONUS_TENS[b]).astype(float)
     return sum(w * s[k.lower()] for k, w in scoring.items() if k.lower() in s)
 
 
@@ -574,6 +580,9 @@ def simulate_games(world, games: list[tuple[date, str, str]], avail, model: Poss
                     box = {s: stats[:, j, SI[s]] for s in STATS}
                     box["reb"] = box["oreb"] + box["dreb"]
                     box["min"] = M[:, j]
-                    box_out[(k, d)] = {s: float(box[s][m].mean()) if m.any() else 0.0 for s in BOX}
+                    box_out[(k, d)] = {s: float(box[s][m].mean()) if m.any() else 0.0 for s in BOX + ["oreb", "dreb"]}
                     box_out[(k, d)]["fp"] = float(fp[:, j][m].mean()) if m.any() else 0.0
+                    if m.any():                    # double-, triple-, quadruple-double rates (other leagues' bonuses)
+                        tens = sum((box[c][m] >= 10).astype(int) for c in ("pts", "reb", "ast", "stl", "blk"))
+                        box_out[(k, d)].update({b.lower(): float((tens >= n_).mean()) for b, n_ in BONUS_TENS.items()})
     return GameSims(fp_out, played_out, box_out)

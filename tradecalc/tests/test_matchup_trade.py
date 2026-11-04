@@ -208,3 +208,23 @@ def test_luck_standings_expected_vs_actual_wins(week_dates):
     assert df.loc[2, "surprises"] == []
     assert (df.loc[3, "exp_record"], df.loc[3, "vs_expected"]) == ("0-1-1", 1.0)  # beat a favorite in week 1
     assert df.loc[3, "surprises"] == [{"week": 1, "result": "won", "p": 0.4, "opp": 4}]
+
+
+def test_finder_skips_trades_where_the_partner_gives_up_the_best_player():
+    """Curry + a bench player for Mikal Bridges can be 'fair' on total games played in a daily-lineup
+    points league; no manager accepts it. The other way round (they get the best player) is fine, and so
+    is buying an injured star whose return is the open question."""
+    from datetime import date, timedelta
+
+    from tradecalc.tests.conftest import make_player, make_state
+    from tradecalc.trade.evaluate import Trade
+    from tradecalc.trade.finder import best_player_gap
+
+    days = [date(2026, 10, 26) + timedelta(i) for i in range(7)]
+    ps = [make_player(1, 1, "AAA", ["PG"], 26), make_player(2, 2, "AAA", ["PG"], 42), make_player(3, 2, "AAA", ["C"], 18),
+          make_player(4, 2, "AAA", ["SF"], 40)]
+    st = make_state(ps, {d: {"AAA"} for d in days})
+    assert best_player_gap(Trade(1, 2, give=(1,), get=(2, 3)), st) == (2, 1)
+    assert best_player_gap(Trade(2, 1, give=(2, 3), get=(1,)), st) is None      # they get the best player
+    st.players[4].injury_status = "OUT"
+    assert best_player_gap(Trade(1, 2, give=(1,), get=(4,)), st) is None        # injured star: their call

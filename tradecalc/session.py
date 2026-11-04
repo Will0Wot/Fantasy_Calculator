@@ -27,17 +27,28 @@ def espn_client(cfg, conn):
     return EspnClient(conn, lg["league_id"], lg["season"], cfg["data"]["espn_cache_ttl_hours"])
 
 
-def load_state(force: bool = False, today: date | str | None = None, warn=None):
-    """Refresh what is stale (or everything with force=True) and build the LeagueState."""
+def load_state(force: bool = False, today: date | str | None = None, warn=None, ref=None, creds=None):
+    """Refresh what is stale (or everything with force=True) and build the LeagueState.
+
+    ref: platforms.LeagueRef (default: the home league in league.yaml); creds: platforms.Credentials for a
+    private league. The league's own settings (scoring, lineup slots, weeks...) come from its platform."""
     from tradecalc.ingest import nba
     from tradecalc.ingest.injuries import fetch_injuries
-    from tradecalc.ingest.league import load_league
     from tradecalc.model.values import build_state
+    from tradecalc.platforms import UnsupportedLeague, home_ref, league_config
+    from tradecalc.platforms import load as load_league
 
-    cfg, conn = context()
+    base, conn = context()
+    ref = ref or home_ref(base)
+    league = load_league(ref, conn, base, creds, force=force)
+    meta = league.meta
+    if meta is not None and meta.scoring_type != "points":
+        raise UnsupportedLeague(
+            f"{meta.name} is a {meta.scoring_type} league. The app models points leagues only so far "
+            "(head-to-head points); category and roto leagues are on the roadmap.")
+    cfg = league_config(base, meta) if meta is not None else base
     lg = cfg["league"]
     interval = cfg["data"]["nba_min_request_interval_s"]
-    league = load_league(espn_client(cfg, conn), force=force)
     nba.refresh_season(conn, lg["prev_nba_season"], complete=True, min_interval=interval)
     r = nba.refresh_season(conn, lg["nba_season"], complete=False, min_interval=interval, force=force,
                            first_day=league.first_day)
@@ -65,4 +76,7 @@ def load_state(force: bool = False, today: date | str | None = None, warn=None):
             state.world = (world, coaches_now)
     except Exception as e:  # noqa: BLE001 - projections still work without the minutes view
         (warn or (lambda m: print(m, file=sys.stderr)))(f"Minutes/role projections unavailable ({e}).")
+    if meta is not None:
+        for n in meta.notes:
+            (warn or (lambda m: print(m, file=sys.stderr)))(n)
     return state

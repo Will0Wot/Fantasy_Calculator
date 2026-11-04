@@ -71,13 +71,17 @@ class Calendar:
         self.games_by_day: dict[date, set[str]] = defaultdict(set)
         for g in league.pro_games:
             self.games_by_day[g["date"]].update((g["home"], g["away"]))
-        self.weeks = build_weeks(
-            self.first_day,
-            last_day,
-            cfg["league"]["regular_season_weeks"],
-            set(self.games_by_day),
-            cfg["weeks"].get("overrides"),
-        )
+        meta = getattr(league, "meta", None)
+        if meta is not None and getattr(meta, "weeks", None):          # the platform's own week dates
+            self.weeks = [Week(int(n), s, e) for n, s, e in meta.weeks]
+        else:
+            self.weeks = build_weeks(
+                self.first_day,
+                last_day,
+                cfg["league"]["regular_season_weeks"],
+                set(self.games_by_day),
+                cfg["weeks"].get("overrides"),
+            )
         self.opponents: dict[int, dict[int, int]] = defaultdict(dict)  # team -> week -> opponent
         for m in league.matchups:
             if m["away"] is not None:

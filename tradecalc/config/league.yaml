@@ -116,6 +116,8 @@ trade:
   monte_carlo_sims: 10000
   top_n_per_opponent: 5
   finder_min_gain: 0.10        # finder only lists trades gaining at least this many wins (= ACCEPT)
+  partner_star_margin: 0.15    # finder skips trades where the other team gives up a healthy player >15% better
+                               # per game than the best it gets back: managers rarely accept those (trade/finder.py)
 
 engine:
   mode: possession            # possession: RotoBot-style possession-by-possession games (sim/possession/)

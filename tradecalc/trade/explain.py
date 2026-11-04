@@ -173,8 +173,16 @@ def explain(r, state) -> Explanation:
                                           f"free agent, {P[i].name} ({P[i].mu:.1f} per game).",
                         f"the open roster spot goes to free agent {P[i].name}"))
 
+    from tradecalc.trade.finder import best_player_gap
+
+    gap = best_player_gap(t, state)
     pw = partner.d_wins
-    if pw > 0.1:
+    if gap:
+        star, back = gap
+        ptxt = (f"Partner: on the numbers {pname} {'gains' if pw >= 0 else 'loses'} {abs(pw):.2f} expected wins, but they'd "
+                f"be giving up the best player in the deal ({P[star].name}, {P[star].mu:.1f} per game, for "
+                f"{P[back].name}, {P[back].mu:.1f}). Managers rarely accept that, whatever the math says.")
+    elif pw > 0.1:
         ptxt = (f"Partner: {pname} gains {pw:+.2f} expected wins, so they would probably say yes — "
                 f"a sign the deal leans their way." if you.d_wins < 0 else
                 f"Partner: {pname} also gains ({pw:+.2f} wins), so this could be a genuine win-win.")

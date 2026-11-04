@@ -502,7 +502,7 @@ def possession(seeds: bool = typer.Option(False, help="Also rewrite the finished
         return
     t0 = time.time()
     df = forecast.project(world, st, coaches, n=forecast.settings()[1], log=typer.echo)
-    out = forecast.save(df, season, st.today)
+    out = forecast.save(df, season, st.today, scoring=st.cfg["scoring"])
     typer.echo(f"Saved {out}: {len(df):,} player-games over {df.date.nunique()} days ({time.time() - t0:.0f}s)")
 
 

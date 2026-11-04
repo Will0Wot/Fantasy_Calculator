@@ -19,6 +19,10 @@ import pandas as pd
 
 MIN_PLAYED = 20      # a player-game needs this many simulations with him playing to get a projection
 KNOWN_POSS = 150     # play-by-play possessions (about two games) before the simulation's own level is trusted
+# Each player's average box score over his simulated games, saved beside the per-game file so a league
+# with other scoring can rescale it (fantasy points are linear in these; DD/TD/QD are per-game rates).
+MIX_STATS = ["min", "pts", "reb", "ast", "stl", "blk", "tov", "fgm", "fga", "ftm", "fta", "fg3m", "fg3a",
+             "oreb", "dreb", "dd", "td", "qd"]
 
 
 def path(season: str) -> Path:
@@ -52,12 +56,13 @@ def simulate_rest(world, weeks: list[list[tuple]], avail, n: int = 300, seed: in
             if pl.sum() < MIN_PLAYED:
                 continue
             x, mk = fp[pl], world.possession.key(k)
+            box = S.box_mean[(k, d)]
             rows.append({"key": k, "date": d.isoformat(), "p_play": float(pl.mean()), "fp": float(x.mean()),
-                         "fp_sd": float(x.std()), "min": S.box_mean[(k, d)]["min"],
-                         "poss": float(expo.get(mk, 0.0)) if mk else 0.0})
+                         "fp_sd": float(x.std()), "poss": float(expo.get(mk, 0.0)) if mk else 0.0,
+                         **{s_: float(box.get(s_, 0.0)) for s_ in MIX_STATS}})
         if log:
             log(f"  week {i + 1}/{len(weeks)}: {len(games)} games")
-    return pd.DataFrame(rows, columns=["key", "date", "p_play", "fp", "fp_sd", "min", "poss"])
+    return pd.DataFrame(rows, columns=["key", "date", "p_play", "fp", "fp_sd", "poss"] + MIX_STATS)
 
 
 def project(world, state, coaches=None, n: int = 300, seed: int = 0, log=None) -> pd.DataFrame:
@@ -73,13 +78,25 @@ def project(world, state, coaches=None, n: int = 300, seed: int = 0, log=None) -
     return simulate_rest(world, weeks, live_avail(world, state, coaches), n=n, seed=seed, log=log)
 
 
-def save(df: pd.DataFrame, season: str, asof: date) -> Path:
-    """Only what the season model reads, compressed (~70 KB a season; the file is committed daily)."""
+def mix_path(season: str) -> Path:
+    return path(season).with_name(f"projections_{season}_mix.parquet")
+
+
+def save(df: pd.DataFrame, season: str, asof: date, scoring: dict | None = None) -> Path:
+    """Only what the season model reads, compressed (~70 KB a season; the file is committed daily), plus
+    each player's average simulated box score (a few KB) and the scoring the per-game points use."""
+    import json
+
     p = path(season)
     p.parent.mkdir(parents=True, exist_ok=True)
     slim = df[["key", "date"]].assign(fp=df.fp.round(1).astype("float32"), poss=df.poss.round().astype("int32"),
                                       asof=asof.isoformat())
     slim.to_parquet(p, index=False, compression="zstd")
+    have = [s_ for s_ in MIX_STATS if s_ in df]
+    if scoring and have:
+        mix = df.groupby("key")[have].mean().astype("float32").round(3).reset_index()
+        mix["scoring"] = json.dumps(dict(scoring), sort_keys=True)
+        mix.to_parquet(mix_path(season), index=False, compression="zstd")
     return p
 
 
@@ -88,9 +105,41 @@ def load(season: str) -> pd.DataFrame | None:
     return pd.read_parquet(p) if p.exists() else None
 
 
-def apply(players: dict, season: str, today: date, weight: float, key_of) -> int:
-    """Per-game projections from this season's saved simulations (see apply_df)."""
+def rescale(df: pd.DataFrame, season: str, scoring: dict) -> pd.DataFrame | None:
+    """The per-game file under another league's scoring: each player's points scaled by his box-score mix
+    (his simulated average scored the new way over the old way). None when it can't be done (no mix
+    file yet); the same scoring returns df unchanged."""
+    import json
+
+    from tradecalc.model.scoring import fantasy_points
+
+    p = mix_path(season)
+    if not p.exists():
+        return None
+    mix = pd.read_parquet(p)
+    if not len(mix):
+        return None
+    old = json.loads(mix["scoring"].iloc[0])
+    if {k.upper(): float(v) for k, v in old.items()} == {k.upper(): float(v) for k, v in scoring.items()}:
+        return df
+    rows = mix.drop(columns="scoring").set_index("key")
+    ratio = {}
+    for k, r in rows.iterrows():
+        box = {s_.upper(): v for s_, v in r.items()}
+        a, b = fantasy_points(box, scoring), fantasy_points(box, old)
+        if b > 0 and a > 0:
+            ratio[k] = a / b
+    out = df[df.key.isin(ratio)].copy()
+    out["fp"] = out["fp"] * out["key"].map(ratio)
+    return out
+
+
+def apply(players: dict, season: str, today: date, weight: float, key_of, scoring: dict | None = None) -> int:
+    """Per-game projections from this season's saved simulations (see apply_df), rescaled to `scoring`
+    when the league scores differently from the saved file."""
     df = load(season)
+    if df is not None and scoring:
+        df = rescale(df, season, scoring)
     return apply_df(players, df, today, weight, key_of) if df is not None else 0
 
 

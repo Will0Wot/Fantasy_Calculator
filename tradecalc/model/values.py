@@ -22,7 +22,7 @@ from tradecalc.model.injury import (InjuryView, injury_view, load_profiles, log_
                                     logged_history, long_absences, manual_history)
 from tradecalc.model.names import norm_name
 from tradecalc.model.prior import fit_adp_curve, prior_table
-from tradecalc.model.scoring import add_fp, fantasy_points, live_stats
+from tradecalc.model.scoring import add_fp, bonus_rates, fantasy_points, live_stats
 from tradecalc.model.variance import shrunk_sigma
 from tradecalc.schedule.calendar import Calendar
 
@@ -261,7 +261,10 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
 
     # --- prior: ADP curve (fit on last season) averaged with ESPN's projection.
     curve = fit_adp_curve(adp_mod.load_adp(cfg.path(cfg["data"]["prev_adp_csv"])), live_stats(prev_logs, scoring))
-    proj = {p.name: fantasy_points(p.projection, scoring) for p in league.players.values() if p.projection.get("GP")}
+    # Bonuses (double-doubles etc.) aren't in a projection of averages: add each player's own rate.
+    bonus = bonus_rates(pd.concat([prev_logs, cur_logs]), scoring, norm_name)
+    proj = {p.name: fantasy_points(p.projection, scoring) + float(bonus.get(norm_name(p.name), 0.0))
+            for p in league.players.values() if p.projection.get("GP")}
     ptab = prior_table(adp_mod.load_adp(cfg.path(cfg["data"]["adp_csv"])), curve, proj)
 
     # --- injuries: current report + history -> per-player view (model/injury.py).
@@ -308,6 +311,8 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
             healthy = minutes_proj["fppg_healthy"].groupby(level=0).first()
             hurt = mp.index.isin(list(out_keys))
             mp = mp.where(~hurt, healthy.reindex(mp.index))
+        if len(bonus):
+            mp = mp + bonus.reindex(mp.index).fillna(0.0)
         ptab = ptab.reindex(ptab.index.union(mp.index))
         curve_adj = curve_adj.reindex(ptab.index)
         mult = mult.reindex(ptab.index).fillna(1.0)
@@ -422,7 +427,8 @@ def build_state(cfg, conn, league: LeagueData, today: date | None = None, injuri
     if eng.get("mode") == "possession":
         from tradecalc.sim.possession import forecast
 
-        if forecast.apply(players, lg["nba_season"], today, float(eng.get("game_weight", 0.5)), norm_name):
+        if forecast.apply(players, lg["nba_season"], today, float(eng.get("game_weight", 0.5)), norm_name,
+                          scoring=scoring):
             for p in players.values():
                 if p.mu_by_date:
                     p.ros_value = sum(p.avail.for_game(j, d) * p.mu_on(d)

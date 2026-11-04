@@ -65,72 +65,170 @@ def _et(ts: float, fmt: str) -> str:
     return _dt.fromtimestamp(ts, league_tz()).strftime(fmt) + " ET"
 
 
-# --- state (shared by every visitor) --------------------------------------------------------
+# --- league (any platform) and state (shared by every visitor of that league) -----------------
+
+from tradecalc.config import load_config  # noqa: E402
+from tradecalc.platforms import (PLATFORMS, Credentials, LeagueNotFound, LeagueRef, UnsupportedLeague,  # noqa: E402
+                                 home_ref, parse_league_input)
+
+HOME = home_ref(load_config())
+
+
+def _ref_from_url() -> LeagueRef:
+    """The league in the link (?platform=espn&league=123), else the home league. Old links with only
+    ?team= keep opening the home league."""
+    plat, lid = st.query_params.get("platform"), st.query_params.get("league")
+    if plat and lid:
+        try:
+            r = parse_league_input(lid, plat)
+            season = st.query_params.get("season")
+            return LeagueRef(r.platform, r.league_id, int(season) if season and season.isdigit() else None)
+        except ValueError:
+            st.warning(f"This link's league ({plat} {lid}) isn't valid, so the default league is shown.")
+    return HOME
+
+
+REF = _ref_from_url()
+IS_HOME = (REF.platform, REF.league_id) == (HOME.platform, HOME.league_id)
+CREDS = st.session_state.get("creds", {}).get(REF.key) or Credentials()
+
+
+def league_picker(expanded: bool = False) -> None:
+    """Sidebar: open another league from ESPN, Sleeper or Yahoo by ID or link."""
+    with st.sidebar.expander("🏀 Open a league", expanded=expanded):
+        plat = st.selectbox("Site", list(PLATFORMS), format_func=PLATFORMS.get, key="pick_platform",
+                            help="Only needed for a bare ID; a pasted link tells the app which site it's from.")
+        text = st.text_input("League ID or link", key="pick_league",
+                             placeholder="e.g. 1331882803, or paste the league's page link")
+        new = Credentials()
+        if plat == "espn":
+            with st.popover("Private ESPN league?"):
+                st.markdown(
+                    "A private league needs two cookies from your ESPN login. In a browser where you're signed in "
+                    "to ESPN: open developer tools → **Application** (Chrome) or **Storage** (Firefox/Safari) → "
+                    "Cookies → `espn.com`, and copy `espn_s2` and `SWID`.\n\n"
+                    "They stay in this browser tab's session only: the app never saves them, and anyone with them "
+                    "can see your league, so don't share them.")
+                new = Credentials(st.text_input("espn_s2", type="password", key="pick_s2"),
+                                  st.text_input("SWID", type="password", key="pick_swid"))
+        elif plat == "yahoo":
+            st.caption("Yahoo leagues need you to sign in with Yahoo (coming soon).")
+        if st.button("Open league", type="primary", width="stretch"):
+            try:
+                r = parse_league_input(text, plat)
+            except ValueError as e:
+                st.error(str(e))
+                return
+            if new.espn_cookies():
+                st.session_state.setdefault("creds", {})[r.key] = new
+            st.query_params.clear()
+            if (r.platform, r.league_id) != (HOME.platform, HOME.league_id):
+                st.query_params.update(r.query())
+            st.rerun()
+        if not IS_HOME and st.button("Back to the default league", width="stretch"):
+            st.query_params.clear()
+            st.rerun()
+
 
 @st.cache_resource
 def shared() -> dict:
-    return {"nonce": 0, "last_refresh": 0.0}
+    """Per league: manual-refresh counter and time of the last manual refresh."""
+    return {"nonce": {}, "last_refresh": {}}
 
 
 @st.cache_resource(show_spinner="Loading league, stats and injuries…", max_entries=6, ttl=STATE_TTL_S)
-def get_state(today: str, nonce: int):
-    """Cached per (day, manual-refresh counter) and expired after STATE_TTL_S, so the next visit
-    after an hour rebuilds it. load_state re-downloads whatever its own caches consider stale
-    (ESPN data after espn_cache_ttl_hours, current-season box scores after an hour)."""
+def get_state(league_key: str, today: str, nonce: int, creds_key: str, _ref: LeagueRef, _creds: Credentials):
+    """Cached per (league, day, manual-refresh counter, login) and expired after STATE_TTL_S, so the next
+    visit after an hour rebuilds it. A private league's state is keyed by a hash of the visitor's cookies,
+    so it is only ever served back to someone holding them. load_state re-downloads whatever its own
+    caches consider stale (league data after espn_cache_ttl_hours, current-season box scores after an hour)."""
     warnings = []
-    s = load_state(force=False, today=None if today.startswith("auto:") else today, warn=warnings.append)
+    s = load_state(force=False, today=None if today.startswith("auto:") else today, warn=warnings.append,
+                   ref=_ref, creds=_creds)
     return s, warnings
 
 
+def _creds_key(c: Credentials) -> str:
+    import hashlib
+
+    ck = c.espn_cookies()
+    return hashlib.sha256(repr(sorted(ck.items())).encode()).hexdigest()[:16] if ck else ""
+
+
 SH = shared()
+NONCE = SH["nonce"].get(REF.key, 0)
 with st.sidebar:
     st.header("🏀 Trade Calculator")
     use_today = st.checkbox("Use today's date", value=True)
     pretend = None if use_today else st.date_input("Pretend today is", value=date(2026, 11, 15)).isoformat()
     if st.button("Refresh data", help="Pull new games, injuries, rosters and this week's scores "
                                       "(also happens automatically every hour)", width="stretch"):
-        ago = time.time() - SH["last_refresh"]
+        ago = time.time() - SH["last_refresh"].get(REF.key, 0.0)
         if ago < REFRESH_COOLDOWN_S:
             st.info(f"Data was refreshed {ago / 60:.0f} min ago; try again in "
                     f"{(REFRESH_COOLDOWN_S - ago) / 60:.0f} min.")
         else:
-            with st.spinner("Refreshing from ESPN and NBA stats…"):
-                load_state(force=True)
-            SH["last_refresh"] = time.time()
-            SH["nonce"] += 1
+            with st.spinner("Refreshing league and NBA data…"):
+                try:
+                    load_state(force=True, ref=REF, creds=CREDS)
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Refresh failed: {e}")
+            SH["last_refresh"][REF.key] = time.time()
+            SH["nonce"][REF.key] = NONCE = NONCE + 1
 
-state, warnings = get_state(pretend or f"auto:{league_today().isoformat()}", SH["nonce"])
+try:
+    state, warnings = get_state(REF.key, pretend or f"auto:{league_today().isoformat()}", NONCE, _creds_key(CREDS),
+                                REF, CREDS)
+except (LeagueNotFound, UnsupportedLeague) as e:
+    st.error(str(e))
+    league_picker(expanded=True)
+    st.stop()
+except Exception as e:  # noqa: BLE001 - a platform outage or a league the app can't read
+    st.error(f"Couldn't load this league from {PLATFORMS.get(REF.platform, REF.platform)}: {e}. "
+             "Try again in a minute, or open another league.")
+    league_picker(expanded=True)
+    st.stop()
 for w in warnings:
     st.sidebar.warning(w)
 
 cfg = state.cfg
 P = state.players
+LEAGUE_KEY = REF.key + (f"-{_creds_key(CREDS)}" if _creds_key(CREDS) else "")
 team_ids = sorted(state.rosters)
 team_label = {t: f"{state.team_name(t)} ({t})" for t in team_ids}
 
 try:
-    qp_team = int(st.query_params.get("team", cfg["league"]["my_team_id"]))
+    qp_team = int(st.query_params.get("team", cfg["league"].get("my_team_id") or 0))
 except ValueError:
-    qp_team = cfg["league"]["my_team_id"]
-if st.session_state.get("my_team") not in team_ids:
-    st.session_state.my_team = qp_team if qp_team in team_ids else team_ids[0]
+    qp_team = 0
+if st.session_state.get("my_team_league") != LEAGUE_KEY:        # a new league: forget the old team
+    st.session_state.my_team_league = LEAGUE_KEY
+    st.session_state.my_team = qp_team if qp_team in team_ids else None
 _tc1, _tc2 = st.columns([2, 3])
 ME = _tc1.selectbox("👤 Your team", team_ids, key="my_team", format_func=lambda t: state.team_name(t),
+                    index=None, placeholder="Pick your team",
                     help="Matchup, trades and simulations are shown from this team's point of view. "
                          "The page link remembers your choice, so bookmark it.")
 _tc2.caption("")
 _tc2.caption("Pick your team — every tab switches to it. Bookmark the link to come back to it.")
+with st.sidebar:
+    meta = state.league.meta
+    st.caption(f"League: {meta.name if meta else state.league.settings.get('name', '')} · "
+               f"{PLATFORMS.get(REF.platform, REF.platform)} · {len(team_ids)} teams")
+    st.caption(f"Model date: {state.today:%b %d, %Y}")
+    if SH["last_refresh"].get(REF.key):
+        st.caption(f"Last manual refresh: {_et(SH['last_refresh'][REF.key], '%b %d %H:%M')}")
+league_picker()
+if ME is None:
+    st.info("👆 Pick your team to see your matchup, trades and pickups.")
+    st.stop()
 if st.query_params.get("team") != str(ME):
     st.query_params["team"] = str(ME)
 with st.sidebar:
-    if st.session_state.get("me") != ME:  # clear results computed for another team
-        st.session_state.me = ME
+    if st.session_state.get("me") != (LEAGUE_KEY, ME):  # clear results computed for another team or league
+        st.session_state.me = (LEAGUE_KEY, ME)
         st.session_state.pop("found", None)
         st.session_state.pop("sim", None)
-    st.caption(f"League: {state.league.settings['name']} · {len(team_ids)} teams")
-    st.caption(f"Model date: {state.today:%b %d, %Y}")
-    if SH["last_refresh"]:
-        st.caption(f"Last manual refresh: {_et(SH['last_refresh'], '%b %d %H:%M')}")
 
 
 def owner(p) -> str:
@@ -165,7 +263,7 @@ def how_it_works(md: str):
 
 @st.cache_resource(show_spinner="Building projection engine (rates, minutes, rotations, defense)…", max_entries=4,
                    ttl=STATE_TTL_S)
-def get_world(today: str | None, nonce: int):
+def get_world(league_key: str, today: str | None, nonce: int):
     from tradecalc.session import context
     from tradecalc.sim.live import live_world
 
@@ -229,11 +327,11 @@ with tab_match:
 
 # ---------------------------------------------------------------------------- League forecast
 @st.cache_resource(show_spinner=False, max_entries=6, ttl=3600)
-def league_forecast(today_key: str, nonce: int, method: str, n: int):
+def league_forecast(league_key: str, today_key: str, nonce: int, method: str, n: int):
     from tradecalc.trade.standings import forecast
 
     if method == "detailed":
-        world, coaches_now = get_world(today_key, nonce)
+        world, coaches_now = get_world(league_key, today_key, nonce)
         return forecast(state, n=n, seed=None, method="detailed", world=world, coaches_now=coaches_now)
     return forecast(state, n=n, seed=None, method="quick")
 
@@ -245,26 +343,25 @@ with tab_league:
     from tradecalc.trade.standings import last_place_line
 
     how_it_works(H.league_forecast(cfg))
-    fkey = (pretend or league_today().isoformat(), SH["nonce"])
-    saved = SH.get("forecast")  # detailed forecast shared by everyone for an hour
+    fkey = (pretend or league_today().isoformat(), NONCE)
+    saved = SH.setdefault("forecast", {}).get(LEAGUE_KEY)  # this league's detailed forecast, shared for an hour
     have_detailed = bool(saved and saved[0] == fkey and time.time() - saved[1] < 3600)
     c1, c2 = st.columns([3, 2])
     if _PP.exists():
         if c2.button("Run detailed forecast (~30 s)" if not have_detailed else "Re-run detailed forecast",
                      help="Game-by-game engine, 2,000 seasons. The result is shared with everyone for an hour."):
             with st.spinner("Simulating every NBA game of the rest of the season, 2,000 times…"):
-                world, coaches_now = get_world(fkey[0], fkey[1])
+                world, coaches_now = get_world(LEAGUE_KEY, fkey[0], fkey[1])
                 from tradecalc.trade.standings import forecast as _fc
 
-                SH["forecast"] = (fkey, time.time(), _fc(state, n=2000, seed=None, method="detailed",
-                                                          world=world, coaches_now=coaches_now))
+                saved = SH["forecast"][LEAGUE_KEY] = (fkey, time.time(), _fc(
+                    state, n=2000, seed=None, method="detailed", world=world, coaches_now=coaches_now))
             have_detailed = True
     if have_detailed:
-        fc = SH["forecast"][2]
-        c1.success(f"Detailed game-by-game forecast · run "
-                   f"{_et(SH['forecast'][1], '%H:%M')}")
+        fc = saved[2]
+        c1.success(f"Detailed game-by-game forecast · run {_et(saved[1], '%H:%M')}")
     else:
-        fc = league_forecast(fkey[0], fkey[1], "quick", 10000)
+        fc = league_forecast(LEAGUE_KEY, fkey[0], fkey[1], "quick", 10000)
         c1.info("Quick forecast (season model). Press **Run detailed forecast** for the game-by-game engine.")
 
     champ, last = fc.iloc[0], fc.iloc[-1]
@@ -351,7 +448,7 @@ with tab_sim:
                                   help="Each simulation plays every game of the week possession by possession."
                                   if _possession.enabled() else None)
         if st.button("Run simulation", type="primary"):
-            world, coaches_now = get_world(pretend or league_today().isoformat(), SH["nonce"])
+            world, coaches_now = get_world(LEAGUE_KEY, pretend or league_today().isoformat(), NONCE)
             with st.spinner(f"Simulating {n_sims:,} weeks…"):
                 res, sims = run_matchup(world, state, ta, tb, state.cal.weeks[wk_n - 1], n=n_sims, seed=None,
                                         coaches_now=coaches_now)
@@ -469,7 +566,7 @@ with tab_sim:
             from tradecalc.sim.engine import live_avail
             from tradecalc.sim.possession.engine import game_detail
 
-            world, coaches_now = get_world(pretend or league_today().isoformat(), SH["nonce"])
+            world, coaches_now = get_world(LEAGUE_KEY, pretend or league_today().isoformat(), NONCE)
             model = world.possession or _pos.model_for(cfg["league"]["nba_season"], state.today.isoformat(),
                                                        lambda k: None)
             if model is None:
@@ -485,7 +582,7 @@ with tab_sim:
         if gs and gs[0] == pick:
             gd = gs[1]
             h, a = gd.home, gd.away
-            _w = get_world(pretend or league_today().isoformat(), SH["nonce"])[0]
+            _w = get_world(LEAGUE_KEY, pretend or league_today().isoformat(), NONCE)[0]
             names = dict(zip(_w.players.index, _w.players["name"]))
             sh_, sa_ = gd.score[h], gd.score[a]
             g1, g2, g3 = st.columns(3)
@@ -756,7 +853,8 @@ with tab_inj:
         if st.button("Save corrections and recalculate"):
             ov_new.dropna(how="all").to_csv(ov_path, index=False)
             hi_new.dropna(how="all").to_csv(hi_path, index=False)
-            SH["nonce"] += 1
+            for k in list(SH["nonce"]) + [REF.key]:          # injury corrections apply to every league
+                SH["nonce"][k] = SH["nonce"].get(k, 0) + 1
             st.rerun()
 
 # ---------------------------------------------------------------------------- Forecast tests
@@ -916,7 +1014,14 @@ with tab_track:
     from tradecalc import tracking_page
 
     st.header("Season tracker: prediction vs actual")
-    tracking_page.render(st, cfg["league"]["nba_season"], state)
+    if IS_HOME:
+        tracking_page.render(st, cfg["league"]["nba_season"], state)
+    else:
+        st.info("The season tracker freezes each week's prediction the morning before the week starts, then "
+                "scores it against the result: an honest record of how the model did. It needs a place to keep "
+                "those predictions all season, so for now it follows only "
+                f"{load_config()['league'].get('name') or 'the default league'}. Following any league is planned "
+                "(docs/production_plan.md).")
 
 # ---------------------------------------------------------------------------- Model audit
 DOCS = Path(__file__).resolve().parent.parent / "docs"

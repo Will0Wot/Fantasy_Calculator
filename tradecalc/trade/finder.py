@@ -3,7 +3,26 @@ from __future__ import annotations
 
 from itertools import combinations
 
+from tradecalc.model.availability import OUT_STATUSES
 from tradecalc.trade.evaluate import Trade, TradeResult, evaluate
+
+STAR_MARGIN = 0.15   # the other team may give up a healthy player at most this much better per game than
+                     # the best player it gets back
+
+
+def best_player_gap(trade: Trade, state) -> tuple[int, int] | None:
+    """(player the partner gives, best player it gets) when the partner gives up a healthy player clearly
+    better per game than anything it receives, else None. Managers rarely accept that, whatever the math
+    says: in a points league with daily lineups, Stephen Curry + a bench player for Mikal Bridges can be
+    "fair" on total games played (Curry plays 76% of them), and nobody would take it."""
+    P = state.players
+    margin = state.cfg["trade"].get("partner_star_margin", STAR_MARGIN)
+    gives = [i for i in trade.get if P[i].injury_status not in OUT_STATUSES]
+    if not gives or not trade.give:
+        return None
+    star = max(gives, key=lambda i: P[i].mu)
+    back = max(trade.give, key=lambda i: P[i].mu)
+    return (star, back) if P[star].mu > (1 + margin) * P[back].mu else None
 
 
 def _ros_delta(roster: list[int], give: tuple, get: tuple, state, fa_ros: float, ir: set) -> float:
@@ -48,6 +67,8 @@ def find_trades(user: int, state, max_size: int = 2, partners: list[int] | None 
             if d_you < -cfg["user_loss_prune_margin"] * give_ros:
                 continue
             if d_them < -cfg["partner_loss_prune_margin"] * get_ros:
+                continue
+            if best_player_gap(trade, state):
                 continue
             survivors.append((d_you, trade))
         # Bound the full evaluations per partner, keeping the best by the cheap metric.
